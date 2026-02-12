@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "AmigaOS 1.3 GCC",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${env:AMIGAOS_NDK}/ndk13-include/**",
+                "${env:AMIGAOS_NDK}/sys-include/**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE",
+                "__GNU_VISIBLE=1"
+            ],
+            "compilerPath": "${env:AMIGAOS_NDK}/bin/m68k-amigaos-gcc",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-arm",
+            "compilerArgs": [
+                "-mcrt=nix13"
+            ]
+        }
+    ],
+    "version": 4
+}
