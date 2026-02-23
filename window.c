@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <string.h>
 #include <stdarg.h>
 
@@ -9,11 +8,13 @@
 
 #include "system.h"
 #include "log.h"
+#include "buffer.h"
+#include "requester.h"
+#include "assert.h"
 
 #include "window.h"
-#include "buffer.h"
 
-LOG_FACILITY(Window, LL_TRACE);
+LOG_FACILITY(Window, LL_INFO);
 
 static const char g_title[] = "BroWser";
 
@@ -26,8 +27,8 @@ struct column_size
 };
 
 static struct IntuiText textQuit = {
-	0, -1,          // FrontPen, BackPen
-	JAM1,           // DrawMode
+	-1, -1,         // FrontPen, BackPen
+	COMPLEMENT,     // DrawMode
 	0, 1,           // LeftEdge, TopEdge (relative to Item box)
 	NULL,           // Font (NULL = default)
 	"Quit",         // The String
@@ -49,8 +50,8 @@ static struct MenuItem itemQuit = {
 };
 
 static struct IntuiText textSeparator = {
-	0, -1,          // FrontPen, BackPen
-	JAM1,           // DrawMode
+	-1, -1,          // FrontPen, BackPen
+	COMPLEMENT,           // DrawMode
 	0, 1,           // LeftEdge, TopEdge (relative to Item box)
 	NULL,           // Font (NULL = default)
 	"\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F\x7F",// The String
@@ -61,7 +62,7 @@ static struct IntuiText textSeparator = {
 static struct MenuItem itemSeparator1 = {
 	&itemQuit,      // NextItem (End of list)
 	0, 20,          // Left, Top (relative to Menu Bar)
-	120, 10,         // Width, Height
+	120, 10,        // Width, Height
 	ITEMTEXT,       // Flags
 	0,              // MutualExclude
 	(APTR)&textSeparator,// ItemRender
@@ -72,11 +73,11 @@ static struct MenuItem itemSeparator1 = {
 };
 
 static struct IntuiText textLocation = {
-	0, -1,          // FrontPen, BackPen
-	JAM1,           // DrawMode
+	-1, -1,         // FrontPen, BackPen
+	COMPLEMENT,     // DrawMode
 	0, 1,           // LeftEdge, TopEdge (relative to Item box)
 	NULL,           // Font (NULL = default)
-	"Location",         // The String
+	"Location",     // The String
 	NULL            // Next Text
 };
 
@@ -96,8 +97,8 @@ static struct MenuItem itemLocation = {
 
 
 static struct IntuiText textSwitch = {
-	0, -1,          // FrontPen, BackPen
-	JAM1,           // DrawMode
+	-1, -1,         // FrontPen, BackPen
+	COMPLEMENT,     // DrawMode
 	0, 1,           // LeftEdge, TopEdge (relative to Item box)
 	NULL,           // Font (NULL = default)
 	"Switch     TAB",         // The String
@@ -122,7 +123,7 @@ static struct MenuItem itemSwitch = {
 static struct Menu mainMenu = {
 	NULL,           // NextMenu (End of bar)
 	0, 0,           // Left, Top
-	120, 0,          // Width, Height (Width of "Project")
+	65, 0,          // Width, Height (Width of "Project")
 	MENUENABLED,    // Flags
 	g_title,        // Menu Name
 	&itemSwitch       // FirstItem -> Points to Quit
@@ -154,26 +155,25 @@ static void browser_window_end_paint(browser_window_t *window)
 	window->region = NULL;
 }
 
-static void browser_window_row_dimm(browser_window_t *window, int *rowH, int *maxRows)
+static void browser_window_row_dimm(browser_window_t *window, uint16_t *rowH, uint16_t *colW, uint16_t *maxRows)
 {
-	int h = window->window->IFont->tf_YSize + 1;
+	uint16_t h = window->window->IFont->tf_YSize + 1;
 	*maxRows = (window->window->Height - 20) / h;
+	*colW = window->columnWidth;
 	*rowH = h;
 }
 
 static void browser_window_item_rect(browser_window_t *window, struct Rectangle *safeRect, int index, struct Rectangle *rect)
 {
-	int maxRows, rowH;
-	browser_window_row_dimm(window, &rowH, &maxRows);
+	uint16_t maxRows, rowH, colW;
+	browser_window_row_dimm(window, &rowH, &colW, &maxRows);
 
 	int column = index / maxRows;
 	int row = index % maxRows;
-	column_size_t *size = buffer_at(&window->columns, column);
-	assert(size != NULL);
-	
-	rect->MinX = safeRect->MinX + 10 + size->start - 1;
+	uint32_t start = (colW + 10) * column;
+	rect->MinX = safeRect->MinX + 5 + start - 1;
 	rect->MinY = safeRect->MinY + 3 + row * rowH;
-	rect->MaxX = rect->MinX + size->width - 5;
+	rect->MaxX = rect->MinX + colW;
 	rect->MaxY = rect->MinY + rowH - 1;
 }
 
@@ -196,94 +196,6 @@ static void RectEmptyRect(struct RastPort *rp, struct Rectangle *rect)
 	PolyDraw(rp, 5, points);
 }
 
-static bool browser_window_refresh_cursor(browser_window_t *window)
-{
-	LOG_TRACE("RefreshCursor (%p)", window);
-	if (window->closed || window->closing) {
-		return false;
-	}
-	struct Window *win = (struct Window *)window->window;
-	if (!win) {
-		return false;
-	}
-
-	browser_t *browser = &window->browser;
-	if (window->cursor == browser->cursor && window->cursor_active == window->active) {
-		// no change, do nothing
-		return false;
-	}
-	if (!browser->listing.count) {
-		// no cursor in empty container
-		return false;
-	}
-
-	struct RastPort *rp = win->RPort;
-	struct Rectangle safeRect;
-
-	browser_window_begin_paint(window, &safeRect);
-
-	struct Rectangle cursorRect;
-	browser_window_item_rect(window, &safeRect, browser->cursor, &cursorRect);
-	//int viewOffset = -(cursorRect.MaxX - safeRect.MaxX);
-	//if (viewOffset != window->offset) {
-	//	window->offset = viewOffset;
-	//	browser_window_end_paint(window);
-	//	return true; // redraw request
-	//}
-
-	SetDrMd(rp, COMPLEMENT);
-
-	// remove old cursor
-	if (window->cursor >= 0) {
-		struct Rectangle oldRect;
-		browser_window_item_rect(window, &safeRect, window->cursor, &oldRect);
-		if (window->cursor_active) {
-			SetAfPt(rp, NULL, 0);
-			RectFillRect(rp, &oldRect);
-		} else {
-			//SetDrPt(rp, 0xAAAA);
-			//RectEmptyRect(rp, &oldRect);
-			uint16_t ditherData[] = {
-				0x5555, 0xAAAA
-			};
-			SetAfPt(rp, ditherData, 1);
-			RectFillRect(rp, &oldRect);
-		}
-	}
-
-	// draw new cursor
-	struct Rectangle newRect;
-	browser_window_item_rect(window, &safeRect, browser->cursor, &newRect);
-
-	if (window->active) {
-		SetAfPt(rp, NULL, 0);
-		RectFillRect(rp, &newRect);
-	} else {
-		//SetDrPt(rp, 0xAAAA);
-		//RectEmptyRect(rp, &newRect);
-		uint16_t ditherData[] = {
-			0x5555, 0xAAAA
-		};
-		SetAfPt(rp, ditherData, 1);
-		RectFillRect(rp, &newRect);
-	}
-
-	window->cursor = browser->cursor;
-	window->cursor_active = window->active;
-	browser_window_end_paint(window);
-	return false;
-}
-
-static bool browser_window_show_message(struct Window *window, const char *message)
-{
-	struct IntuiText body = { 2, 0, JAM1, 20, 10, NULL, (char *)message, NULL };
-	struct IntuiText neg  = { 2, 0, JAM1, 6, 3, NULL, "OK", NULL };
-
-	/* AutoRequest(Window, BodyText, PosText, NegText, PosFlags, NegFlags, Width, Height) */
-	LOG_WARN("Message: %s", message);
-	return AutoRequest(window, &body, NULL, &neg, 0, 0, -1, -1);
-}
-
 static void browser_window_set_title(browser_window_t *window, const char *format, ...)
 {
 	if (format) {
@@ -300,6 +212,97 @@ static void browser_window_set_title(browser_window_t *window, const char *forma
 	}
 }
 
+static bool browser_window_refresh_cursor(browser_window_t *window)
+{
+	static uint16_t g_ditherData[] = {
+		0x5555, 0xAAAA
+	};
+
+	LOG_TRACE("RefreshCursor (%p)", window);
+	if (window->closed || window->closing) {
+		return false;
+	}
+	struct Window *win = (struct Window *)window->window;
+	if (!win) {
+		return false;
+	}
+
+	browser_t *browser = &window->browser;
+	browser_state_t *state = browser->state;
+	if (!state) {
+		// no cursor when no browsing state
+		return false;
+	}
+	if (window->cursor == state->cursor && window->cursor_active == window->active) {
+		// no change, do nothing
+		return false;
+	}
+	if (!browser->listing.count) {
+		// no cursor in empty container
+		return false;
+	}
+	if (!browser->sorted.count) {
+		// no sorted items
+		return false;
+	}
+
+	PROFILE_START();
+
+	struct RastPort *rp = win->RPort;
+	struct Rectangle safeRect;
+
+	browser_window_begin_paint(window, &safeRect);
+
+	struct Rectangle newRect;
+	browser_window_item_rect(window, &safeRect, state->cursor, &newRect);
+	int viewOffset = newRect.MaxX - safeRect.MaxX + 10;
+	if (viewOffset < 0) {
+		viewOffset = 0;
+	}
+	if (viewOffset != window->offset) {
+		LOG_TRACE("viewOffset: %d; window->offset: %d", viewOffset, window->offset);
+		window->offset = viewOffset;
+		browser_window_end_paint(window);
+		return true; // redraw request
+	}
+
+	newRect.MinX -= viewOffset;
+	newRect.MaxX -= viewOffset;
+
+	SetDrMd(rp, COMPLEMENT);
+
+	// remove old cursor
+	if (window->cursor >= 0) {
+		struct Rectangle oldRect;
+		browser_window_item_rect(window, &safeRect, window->cursor, &oldRect);
+		oldRect.MinX -= viewOffset;
+		oldRect.MaxX -= viewOffset;
+		if (window->cursor_active) {
+			SetAfPt(rp, NULL, 0);
+			RectFillRect(rp, &oldRect);
+		} else {
+			SetAfPt(rp, g_ditherData, 1);
+			RectFillRect(rp, &oldRect);
+		}
+	}
+
+	// draw new cursor
+	if (window->active) {
+		SetAfPt(rp, NULL, 0);
+		RectFillRect(rp, &newRect);
+	} else {
+		SetAfPt(rp, g_ditherData, 1);
+		RectFillRect(rp, &newRect);
+	}
+
+	window->cursor = state->cursor;
+	window->cursor_active = window->active;
+	browser_window_end_paint(window);
+
+	PROFILE_END("RefreshCursor");
+	return false;
+}
+
 static void browser_window_refresh(browser_window_t *window)
 {
 	LOG_TRACE("Refresh (%p)", window);
@@ -311,10 +314,13 @@ static void browser_window_refresh(browser_window_t *window)
 		return;
 	}
 	browser_t *browser = &window->browser;
-	if (window->names_hash == browser->names_hash) {
+	LOG_INFO("Refresh: View: %.8X; Browser: %.8X", window->view_hash, browser->hash);
+	if (window->view_hash == browser->hash) {
 		// no change in the listing
 		return;
 	}
+
+	PROFILE_START();
 
 	struct RastPort *rp = win->RPort;
 	struct Rectangle safeRect;
@@ -327,86 +333,124 @@ static void browser_window_refresh(browser_window_t *window)
 	SetBPen(rp, 0);
 	RectFillRect(rp, &safeRect);
 
-	const char *err = browser_error(browser);
-	if (err) {
-		SetAPen(rp, 3);
-		Move(rp, safeRect.MinX + 10, safeRect.MinY + 10);
-		const char *title = "Error opening:";
-		Text(rp, title, strlen(title));
-		Move(rp, safeRect.MinX + 10, safeRect.MinY + 20);
-		Text(rp, err, strlen(err));
+	if (!browser->listing.count) {
+		const char *err = browser_error(browser);
+		sys_sprintf(&browser->message, "Result: %s (%d)", err, browser->error);
 	}
 
-	int maxRows, rowH;
-	browser_window_row_dimm(window, &rowH, &maxRows);
+	// convert browser message text into intuition text lines
+	if (browser->message.count) {
+		// terminate the message by '\0'
+		buffer_append(&browser->message, "", 1);
+		requester_text2lines((char *)browser->message.data, &window->lines);
+		buffer_clear(&browser->message);
+	}
+
+	// print IText lines
+	if (window->lines.count) {
+		PrintIText(rp, window->lines.data, safeRect.MinX, safeRect.MinY);
+		goto end;
+	}
+
+	uint16_t maxRows, rowH, colW;
+	browser_window_row_dimm(window, &rowH, &colW, &maxRows);
 	window->maxRows = maxRows;
 
-	buffer_clear(&window->columns);
+	uint16_t maxWidth = 0;
+	uint16_t viewOffset = window->offset;
+	LOG_TRACE("viewOffset: %d", viewOffset);
 
-	// TODO: shift view
-	int viewOffset = 0;
-	int maxWidth = 0;
-	for (int j = 0, k = 0; j < browser->listing.count; j += maxRows, k++) {
-		int colWidth = 0;
-		for (int i = 0; i < maxRows; i++) {
-			int index = j+i;
-			fileinfo_t *item = (fileinfo_t *)buffer_at(&browser->listing, index);
-			if (!item) {
-				continue;
+	uint16_t baseX = safeRect.MinX + 5 - viewOffset;
+	uint16_t baseY = safeRect.MinY + 10;
+
+	fileinfo_t **items = (fileinfo_t **)buffer_at(&browser->sorted, 0);
+	uint16_t items_count = browser->sorted.count;
+	uint16_t maxLen = window->columnChars;
+
+	//fileinfo_t *items = (fileinfo_t *)buffer_at(&browser->listing, 0);
+	//uint16_t items_count = browser->listing.count;
+	uint16_t wh = win->Height;
+	assert(browser->listing.count == browser->sorted.count);
+	for (int j = 0; j < items_count; j += maxRows) {
+
+		uint16_t colWidth = colW;
+		uint16_t currentX = baseX + maxWidth;
+		uint16_t currentY = baseY;
+		uint8_t currentPen = -1;
+
+		// vertical bars
+		SetAPen(rp, 1);
+		Move(rp, currentX + colW + 5, 0);
+		Draw(rp, currentX + colW + 5, wh);
+		SetAPen(rp, 3);
+		Move(rp, currentX + colW + 4, 0);
+		Draw(rp, currentX + colW + 4, wh);
+		SetAPen(rp, 2);
+		Move(rp, currentX + colW + 3, 0);
+		Draw(rp, currentX + colW + 3, wh);
+
+		// text items
+		for (uint16_t i = 0; i < maxRows; i++) {
+			uint16_t index = j+i;
+			if (index >= items_count) {
+				break;
 			}
 
-			const char *name = &item->name[0];
-			uint16_t nameLen = item->len;
+			fileinfo_t *item = *items++;
+			//fileinfo_t *item = items++;
 
-			Move(rp, safeRect.MinX + 10 + maxWidth + viewOffset, safeRect.MinY + 10 + i * rowH);
+			// move
+			Move(rp, currentX, currentY);
+			currentY += rowH;
 
 			// directory color
-			if (sys_iscontainer(item->ctype)) {
-				SetAPen(rp, 1);
-			} else {
-				SetAPen(rp, 2);
+			uint8_t targetPen = sys_iscontainer(item->ctype) ? 1 : 2;
+			if (currentPen != targetPen) {
+				currentPen = targetPen;
+				SetAPen(rp, currentPen);
 			}
 
-			Text(rp, name, nameLen);
-			int textLen = TextLength(rp, name, nameLen);
-			if (textLen > colWidth) {
-				colWidth = textLen;
+			// draw text
+			const char *name = &item->name[0];
+			uint16_t len = item->len;
+			if (len > maxLen) {
+				len = maxLen;
 			}
+			Text(rp, name, len);
 		}
 
 		colWidth += 10;
-		
-		column_size_t *pCol = buffer_emplace(&window->columns);
-		if (pCol) {
-			pCol->start = maxWidth;
-			pCol->width = colWidth;
-		}
 
 		maxWidth += colWidth;
 	}
 
+
+end:
 	browser_window_end_paint(window);
 
 	// invalidate cursor
 	window->cursor = -1;
 
 	// mark window as updated
-	window->names_hash = browser->names_hash;
+	window->view_hash = browser->hash;
 
+	PROFILE_END("Refresh");
 	browser_window_refresh_cursor(window);
 }
 
 static const char * browser_window_current_path(browser_window_t *window)
 {
 	const char *current_path = browser_currentpath(&window->browser);
-	return current_path ? current_path : "<Computer>";
+	return current_path && *current_path ? current_path : "<Computer>";
 }
 
 static bool browser_window_open(browser_window_t *window, const char *path)
 {
 	browser_t *browser = &window->browser;
 	browser_window_set_title(window, NULL);
+	buffer_clear(&window->lines);
 	bool result = browser_open(browser, path);
+	window->offset = 0;
 	browser_window_refresh(window);
 	browser_window_set_title(window, "%s", browser_window_current_path(window));
 	return result;
@@ -416,7 +460,9 @@ static bool browser_window_back(browser_window_t *window)
 {
 	browser_t *browser = &window->browser;
 	browser_window_set_title(window, NULL);
+	buffer_clear(&window->lines);
 	bool result = browser_pop(browser);
+	browser_window_refresh_cursor(window);
 	browser_window_refresh(window);
 	browser_window_set_title(window, "%s", browser_window_current_path(window));
 	return result;
@@ -424,8 +470,6 @@ static bool browser_window_back(browser_window_t *window)
 
 static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qualifier)
 {
-	LOG_TRACE("Input (%p) %X, %X", window, code, qualifier);
-	(void)qualifier;
 	if (window->closed || window->closing) {
 		return false;
 	}
@@ -437,7 +481,12 @@ static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qua
 	bool beep = false;
 	switch (code) {
 		case 0x4C: // UP
-			return browser_move(browser, -1);
+			if (qualifier & IEQUALIFIER_RALT) {
+				beep = browser->error || !browser_window_open(window, "/");
+				break;
+			} else {
+				return browser_move(browser, -1);
+			}
 		case 0x4D: // DOWN
 			return browser_move(browser, +1);
 		case 0x4F: // LEFT
@@ -464,10 +513,14 @@ static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qua
 
 void browser_window_ask_location(browser_window_t *window)
 {
-	(void)window;
+	char buffer[512] = {0};
+	strncpy(buffer, browser_currentpath(&window->browser), sizeof(buffer) - 1);
+	if (requester_text("Enter location:", buffer, sizeof(buffer))) {
+		browser_window_open(window, buffer);
+	}
 }
 
-bool browser_window_init(browser_window_t *window, const char* path, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height)
+bool browser_window_init(browser_window_t *window, const char* path, bool path_release, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height)
 {
 	LOG_DEBUG("Init (%p)", window);
 	window->closing = false;
@@ -480,11 +533,11 @@ bool browser_window_init(browser_window_t *window, const char* path, WORD LeftEd
 		
 		/* IDCMP Flags: Events we want to hear about */
 		/* We only want to know when the Close Gadget is clicked */
-		IDCMP_DISKINSERTED | IDCMP_DISKREMOVED | IDCMP_NEWSIZE | IDCMP_RAWKEY | IDCMP_MENUPICK | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW,   
+		IDCMP_DISKINSERTED | IDCMP_DISKREMOVED | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW,
 		
 		/* Window Flags: Capabilities of the window */
-		/* It has a close gadget, depth gadget, drag bar, and activates on opening */
-		WFLG_DEPTHGADGET | WFLG_SIZEGADGET | WFLG_DRAGBAR | WFLG_ACTIVATE,
+		/* It has a close gadget, depth gadget, drag bar */
+		WFLG_DEPTHGADGET | WFLG_SIZEGADGET | WFLG_DRAGBAR | WFLG_NEWLOOKMENUS,
 		
 		NULL,				/* FirstGadget (User custom gadgets) */
 		NULL,				/* CheckMark (Custom imagery) */
@@ -501,37 +554,39 @@ bool browser_window_init(browser_window_t *window, const char* path, WORD LeftEd
 	nw.Title = (STRPTR)g_title;
 
 	// open window
-	window->window = OpenWindow(&nw);
-	if (!window->window) {
+	struct Window *win = OpenWindow(&nw);
+	if (!win) {
 		LOG_WARN("Failed to 'OpenWindow' new browser window (%p)", window);
 		return false;
 	}
-	window->window->UserData = (BYTE *)window;
 
-	ClearMenuStrip(window->window);
-	if (!SetMenuStrip(window->window, &mainMenu)) {
+	win->UserData = (BYTE *)window;
+	window->window = win;
+
+	ClearMenuStrip(win);
+	if (!SetMenuStrip(win, &mainMenu)) {
 		LOG_WARN("Failed to set menu strip (%p)", window);
 	}
 
-	// init columns size list
-	buffer_init(&window->columns, sizeof(column_size_t), 0);
 	buffer_init(&window->title, 1, 16);
+	buffer_init(&window->lines, sizeof(struct IntuiText), 8);
 
 	// init browser
-	if (!browser_init(&window->browser)) {
+	browser_t *browser = &window->browser;
+	if (!browser_init(browser, path, path_release)) {
 		LOG_ERROR("Failed to initialize browser (%p)", window);
-		CloseWindow(window->window);
+		browser_cleanup(browser);
+		CloseWindow(win);
 		return false;
-	}
-
-	bool br = path ? browser_push(&window->browser, path) : browser_refresh(&window->browser);
-	if (!br) {
-		LOG_WARN("Failed to do initial browser refresh (%p)", window);
 	}
 
 	// redraw window
 	window->closed = false;
-	window->names_hash = 0;
+	window->view_hash = 0;
+
+	window->columnChars = 16;
+	window->columnWidth = TextLength(win->RPort, "****************", 16);
+
 	browser_window_refresh(window);
 	browser_window_set_title(window, "%s", browser_window_current_path(window));
 	return true;
@@ -546,7 +601,7 @@ void browser_window_cleanup(browser_window_t *window)
 			window->window = NULL;
 		}
 		buffer_cleanup(&window->title);
-		buffer_cleanup(&window->columns);
+		buffer_cleanup(&window->lines);
 		browser_cleanup(&window->browser);
 		window->closed = true;
 		window->closing = false;
@@ -580,11 +635,15 @@ bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int cou
 				case IDCMP_DISKINSERTED:
 				case IDCMP_DISKREMOVED:
 					browser_refresh(&window->browser);
+					browser_window_refresh(window);
+					break;
 				case IDCMP_NEWSIZE:
+					window->view_hash = 0;
 					browser_window_refresh(window);
 					break;
 				case IDCMP_REFRESHWINDOW:
 					BeginRefresh(win);
+					window->view_hash = 0;
 					browser_window_refresh(window);
 					EndRefresh(win, true);
 					break;
@@ -592,7 +651,7 @@ bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int cou
 					if (browser_window_input(window, msg->Code, msg->Qualifier)) {
 						if (browser_window_refresh_cursor(window)) {
 							LOG_TRACE("Redrawing offset %d!", window->offset);
-							window->names_hash = 0;
+							window->view_hash = 0;
 							browser_window_refresh(window);
 						}
 					}

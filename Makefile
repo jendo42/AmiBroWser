@@ -4,7 +4,10 @@ BUILD_DIR = .build
 SRC_DIR = .
 VERSION_H = $(BUILD_DIR)/version.h
 OUTPUT = $(BUILD_DIR)/$(PROJ).exe
+OUTPUT_ICON = $(OUTPUT).info
+OUTPUT_MAP = $(BUILD_DIR)/$(PROJ).map
 HOST_OUTPUT = $(shell wslpath -a -w $(OUTPUT))
+HOST_ICON = $(shell wslpath -a -w $(OUTPUT_ICON))
 
 # toolchain setup
 TOOLCHAIN := m68k-amigaos-
@@ -13,10 +16,10 @@ CXX := $(TOOLCHAIN)g++
 STRIP := $(TOOLCHAIN)strip
 CMD := cmd.exe
 
-CFLAGS := -m68010 -mtune=68010 -mcrt=nix13 -funsigned-char -Ofast -fjump-tables -fomit-frame-pointer -foptimize-strlen -flto -I$(BUILD_DIR)
+CFLAGS := -m68010 -mtune=68010 -mcrt=nix13 -funsigned-char -flto -Os -fjump-tables -fomit-frame-pointer -foptimize-strlen -ffunction-sections -fdata-sections -I$(BUILD_DIR)
 CXXFLAGS := -I$(BUILD_DIR)
-CPPFLAGS := -Wall -Wextra -Werror -Wno-error=unused-function -Wno-missing-field-initializers -Wno-strict-aliasing -Wno-pointer-sign -Wno-ignored-qualifiers -Wno-switch -pipe
-LDFLAGS := -flto
+CPPFLAGS := -Wall -Wextra -Werror -Wno-error=unused-function -Wno-error=unused-parameter -Wno-error=unused-variable -Wno-missing-field-initializers -Wno-strict-aliasing -Wno-pointer-sign -Wno-ignored-qualifiers -Wno-switch -pipe
+LDFLAGS := -flto -mcrt=nix13 -Wl,--gc-sections -Wl,-Map=$(OUTPUT_MAP)
 
 ifeq ($(NLOG), 1)
 CPPFLAGS := $(CPPFLAGS) -DNLOG
@@ -55,18 +58,21 @@ $(BUILD_DIR):
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(VERSION_H) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
-	$(CC) $(CPPFLAGS) -x assembler-with-cpp $(CFLAGS) -c -o $@ $<
+	@$(CC) $(CPPFLAGS) -DBASE_FILE_NAME=$< -x assembler-with-cpp $(CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(VERSION_H) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -DBASE_FILE_NAME=$< -c -o $@ $<
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(VERSION_H) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
-	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $<
+	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DBASE_FILE_NAME=$< -c -o $@ $<
+
+$(OUTPUT_ICON):
+	cp assets/icon.info $(OUTPUT_ICON)
 
 # Generate executable
-$(OUTPUT): $(OBJS)
+$(OUTPUT): $(OBJS) $(OUTPUT_ICON)
 	@echo "Linking '$@'"
 	@$(CC) $(CPPFLAGS) $(LDFLAGS) $(OBJS) -o $@
 ifeq ($(DOSTRIP), 1)
@@ -77,9 +83,9 @@ endif
 	@du -bh "$@" | cut -f1
 
 clean:
-	@rm -fv $(OBJS) $(VERSION_H) $(OUTPUT)
+	@rm -fv $(OBJS) $(VERSION_H) $(OUTPUT) $(OUTPUT_ICON) $(OUTPUT_MAP)
 
 deploy: $(OUTPUT)
-	@echo "Copying stripped '$@' to floppy..."
+	@echo "Copying stripped '$(OUTPUT)' to floppy..."
 	@$(STRIP) $(OUTPUT)
-	@$(CMD) /C copy '$(HOST_OUTPUT)' A:\\
+	@$(CMD) /C copy '$(HOST_OUTPUT)' '$(HOST_ICON)' C:\\

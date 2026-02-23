@@ -13,7 +13,7 @@
                 "_UNICODE",
                 "__GNU_VISIBLE=1"
             ],
-            "compilerPath": "${env:AMIGAOS_NDK}/bin/m68k-amigaos-gcc",
+            "compilerPath": "${env:AMIGAOS_NDK}/../bin/m68k-amigaos-gcc",
             "cStandard": "c17",
             "cppStandard": "c++17",
             "intelliSenseMode": "linux-gcc-arm",

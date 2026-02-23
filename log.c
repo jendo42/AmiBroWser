@@ -1,3 +1,5 @@
+#include <proto/exec.h>
+
 #include "log.h"
 #include "timer.h"
 #include "system.h"
@@ -38,11 +40,15 @@ const char *const log_levelstring(loglevel_t level)
 void log_vprintf(loglevel_t level, logfacility_t *facility, const char *format, va_list args)
 {
 	if (level >= facility->level && !facility->locked) {
+		// hack? save the last IoErr
+		struct Process *proc = (struct Process *)FindTask(NULL);
+		uint32_t saved = proc->pr_Result2;
 		char buffer[STB_SPRINTF_MIN];
 		systimeval_t time;
 		sys_gettime(&time);
 		stbsp_vsnprintf(buffer, sizeof(buffer), format, args);
 		sys_printf("%lu.%06lu %s [%s] %s\n", time.tv_sec, time.tv_usec, log_levelstring(level), facility->name, buffer);
+		proc->pr_Result2 = saved;
 		facility->locked = false;
 	}
 }

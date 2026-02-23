@@ -1,11 +1,13 @@
 #include <memory.h>
 #include <stdlib.h>
-#include <assert.h>
+
+#include "system.h"
+#include "log.h"
+#include "assert.h"
 
 #include "buffer.h"
-#include "log.h"
 
-LOG_FACILITY(Buffer, LL_DEBUG);
+LOG_FACILITY(Buffer, LL_INFO);
 
 void buffer_init(buffer_t* buffer, uint16_t size, uint16_t preallocCount)
 {
@@ -22,6 +24,7 @@ void buffer_init(buffer_t* buffer, uint16_t size, uint16_t preallocCount)
 void buffer_clear(buffer_t *buffer)
 {
 	assert(buffer_resize(buffer, buffer->size, 0) == true);
+	buffer->user = 0;
 }
 
 bool buffer_resize(buffer_t* buffer, uint16_t size, uint16_t count)
@@ -34,6 +37,8 @@ bool buffer_resize(buffer_t* buffer, uint16_t size, uint16_t count)
 		if (diff < MinimumGrowSize) {
 			newCapacity += MinimumGrowSize - diff;
 		}
+		// + 1.5x growth rate
+		newCapacity += buffer->capacity + (buffer->capacity >> 1);
 		void *data = realloc(buffer->data, newCapacity);
 		if (!data) {
 			// not enough memory
@@ -52,11 +57,6 @@ bool buffer_resizec(buffer_t* buffer, uint16_t count)
 	return buffer_resize(buffer, buffer->size, count);
 }
 
-bool buffer_check(buffer_t* buffer)
-{
-	return buffer->data && buffer->capacity;
-}
-
 void buffer_cleanup(buffer_t* buffer)
 {
 	LOG_DEBUG("Cleanup (%p)", buffer);
@@ -66,19 +66,19 @@ void buffer_cleanup(buffer_t* buffer)
 	memset(buffer, 0, sizeof(*buffer));
 }
 
-void *buffer_emplace(buffer_t* buffer)
+void *buffer_emplace_back(buffer_t* buffer)
 {
-	LOG_TRACE("Emplace (%p)", buffer);
-	uint32_t end = buffer_end(buffer);
+	LOG_TRACE("EmplaceBack (%p)", buffer);
+	uint32_t size = buffer->count * buffer->size;
 	if (buffer_resizec(buffer, buffer->count + 1)) {
-		return (char *)buffer->data + end;
+		return (char *)buffer->data + size;
 	}
 	return NULL;
 }
 
-bool buffer_pop(buffer_t* buffer)
+bool buffer_pop_back(buffer_t* buffer)
 {
-	LOG_TRACE("Pop (%p)", buffer);
+	LOG_TRACE("PopBack (%p)", buffer);
 	uint16_t count = buffer->count;
 	if (count) {
 		buffer_resizec(buffer, count - 1);
@@ -88,12 +88,12 @@ bool buffer_pop(buffer_t* buffer)
 	return false;
 }
 
-void *buffer_top(buffer_t* buffer)
+void *buffer_back(buffer_t* buffer)
 {
-	LOG_TRACE("Top (%p)", buffer);
+	LOG_TRACE("Back (%p)", buffer);
 	uint16_t count = buffer->count;
 	uint16_t size = buffer->size;
-	if (buffer_check(buffer) && count) {
+	if (count && buffer->data && buffer->capacity) {
 		return (char *)buffer->data + size * (count - 1);
 	}
 	return NULL;
@@ -104,7 +104,7 @@ void *buffer_at(buffer_t* buffer, uint16_t i)
 	LOG_TRACE("At (%p, %u)", buffer, (ULONG)i);
 	uint16_t count = buffer->count;
 	uint16_t size = buffer->size;
-	if (buffer_check(buffer) && i < count) {
+	if (i < count && buffer->data && buffer->capacity) {
 		return (char *)buffer->data + size * i;
 	}
 	return NULL;
@@ -112,16 +112,32 @@ void *buffer_at(buffer_t* buffer, uint16_t i)
 
 bool buffer_append(buffer_t *buffer, const void *data, uint16_t count)
 {
-	uint32_t end = buffer_end(buffer);
+	LOG_TRACE("Append (%p, %p, %u)", buffer, data, (unsigned)count);
+	uint32_t size = buffer->count * buffer->size;
 	if (!buffer_resizec(buffer, buffer->count + count)) {
 		return false;
 	}
 
-	memcpy((char *)buffer->data + end, data, buffer->size * count);
+	memcpy((char *)buffer->data + size, data, buffer->size * count);
 	return true;
 }
 
-uint32_t buffer_end(buffer_t *buffer)
+bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count)
+{
+	LOG_TRACE("AppendFile (%p, %p, %u)", buffer, file, (unsigned)count);
+	uint32_t size2read = buffer->size * count;
+	uint32_t size = buffer->count * buffer->size;
+	if (!buffer_resizec(buffer, buffer->count + count)) {
+		return false;
+	}
+	uint32_t read = Read(file, (char *)buffer->data + size, size2read);
+	if (read != size2read) {
+		return false;
+	}
+	return true;
+}
+
+uint32_t buffer_size(buffer_t *buffer)
 {
 	return (uint32_t)buffer->count * buffer->size;
 }

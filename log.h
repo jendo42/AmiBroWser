@@ -16,12 +16,15 @@ enum loglevel {
 	LL_FATAL
 };
 
-struct logfacility {
+struct logfacility
+{
 	loglevel_t level;
 	const char *name;
 	volatile bool locked;
 };
 
+#define PROFILE_START() { systimeval_t t1, t2; sys_gettime(&t1)
+#define PROFILE_END(name) sys_gettime(&t2); timer_diff(&t1, &t2); LOG_TRACE("PROBE '%s' took: %lu.%06lu", name, t2.tv_sec, t2.tv_usec); }
 
 #ifdef NLOG
 	#define LOG_FACILITY(n, l)
