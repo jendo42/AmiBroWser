@@ -171,6 +171,8 @@ bool browser_refresh(browser_t *browser)
 		PROFILE_END("Refresh/quicksort");
 	}
 
+	LOG_TRACE("Refresh: 'listing' has %u bytes capacity", browser->listing.capacity);
+	LOG_TRACE("Refresh: 'sorted' has %u bytes capacity", browser->sorted.capacity);
 	return true;
 }
 
