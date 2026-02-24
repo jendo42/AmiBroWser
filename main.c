@@ -43,9 +43,11 @@ int main(int argc, char *argv[])
 		return ERROR_INVALID_RESIDENT_LIBRARY;
 	}
 
+#ifndef NLOG
 	if (!process->pr_CLI) {
 		sys_attachconsole("BroWser Debug", 0, 0, 600, 200);
 	}
+#endif // NLOG
 
 	LOG_INFO("BroWser v0.1 by Jendo");
 	if (!sys_init()) {
