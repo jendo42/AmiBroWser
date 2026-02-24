@@ -79,10 +79,6 @@ uint32_t sys_attachconsole(const char *title, int x, int y, int w, int h);
 // `sys_init()` must be called before usage
 void sys_gettime(systimeval_t *time);
 
-void *sys_realloc(void *ptr, uint32_t size);
-void sys_free(void *ptr);
-char *sys_strdup(const char* str);
-
 struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t prio, uint32_t stack);
 struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int8_t prio, uint32_t stack);
 

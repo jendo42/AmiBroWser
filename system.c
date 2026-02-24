@@ -876,42 +876,6 @@ uint32_t sys_hcombine(uint32_t in, uint32_t value)
 	return in ^ (value + 0x9e3779b9 + (in << 6) + (in >> 2));
 }
 
-void *sys_realloc(void *ptr, uint32_t size)
-{
-	uint32_t *oldptr = (uint32_t *)ptr;
-	uint32_t *newptr = (uint32_t *)AllocMem(size + sizeof(uint32_t), 0);
-	if (!newptr) {
-		return NULL;
-	}
-
-	++newptr;
-	newptr[-1] = size;
-	if (ptr) {
-		CopyMemQuick(oldptr, newptr, oldptr[-1]);
-		FreeMem(oldptr, oldptr[-1]);
-	}
-
-	return newptr;
-}
-
-void sys_free(void *ptr)
-{
-	if (ptr) {
-		uint32_t *oldptr = (uint32_t *)ptr;
-		FreeMem(oldptr, oldptr[-1]);
-	}
-}
-
-char *sys_strdup(const char *str)
-{
-	uint32_t len = strlen(str);
-	char *out = sys_realloc(NULL, len+1);
-	if (!out) {
-		return NULL;
-	}
-	return strcpy(out, str);
-}
-
 const char *const sys_ioerrmessage(uint32_t err)
 {
 	switch (err) {
