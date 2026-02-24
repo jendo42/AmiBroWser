@@ -51,7 +51,11 @@ LDFLAGS := \
 	-Wl,-Map=$(OUTPUT_MAP)
 
 ifeq ($(NLOG), 1)
-CPPFLAGS := $(CPPFLAGS) -DNLOG
+CPPFLAGS := $(CPPFLAGS) -DNLOG=1
+endif
+
+ifeq ($(NDEBUG), 1)
+CPPFLAGS := $(CPPFLAGS) -DNDEBUG=1
 endif
 
 # List source files
