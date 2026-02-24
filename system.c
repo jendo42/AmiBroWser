@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <memory.h>
 #include <libraries/dos.h>
 #include <proto/exec.h>
