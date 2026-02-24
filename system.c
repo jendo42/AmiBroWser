@@ -14,6 +14,8 @@
 
 #include "system.h"
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 LOG_FACILITY(System, LL_DEBUG);
 
 static systimer_t g_timer;
@@ -26,20 +28,12 @@ static void sys_fib2info(fileinfo_t *item, struct FileInfoBlock *fib)
 {
 	if (!item->len) {
 		item->len = strlen(fib->fib_FileName);
-		item->name[item->len] = 0;
-		strncpy(item->name, fib->fib_FileName, sizeof(item->name));
+		memcpy(item->name, fib->fib_FileName, MIN(item->len, sizeof(item->name)));
 	}
 	item->glen = 0;
 	item->hash = sys_djb2(item->name, item->len);
 	item->ctype = fib->fib_DirEntryType > 0 ? CT_DIR : CT_NONE;
-	item->fhold = (fib->fib_Protection & FIBF_HOLD);
-	item->fscript = (fib->fib_Protection & FIBF_SCRIPT);
-	item->fpure = (fib->fib_Protection & FIBF_PURE);
-	item->farch = (fib->fib_Protection & FIBF_ARCHIVE);
-	item->fread = (fib->fib_Protection & FIBF_READ);
-	item->fwrite = (fib->fib_Protection & FIBF_WRITE);
-	item->fexec = (fib->fib_Protection & FIBF_EXECUTE);
-	item->fdel = (fib->fib_Protection & FIBF_DELETE);
+	item->attr = fib->fib_Protection & 0xFF;
 }
 
 static char *sprintf_callback(const char *buf, void *user, int len)

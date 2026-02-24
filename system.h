@@ -38,20 +38,25 @@ struct fakeseg {
 
 struct fileinfo
 {
-	char name[128];
+	char name[108];
 	uint16_t len;
 	uint16_t glen;
 	uint32_t hash;
 	containertype_t ctype : 2;
 
-	bool fhold : 1;
-	bool fscript : 1;
-	bool fpure : 1;
-	bool farch : 1;
-	bool fread : 1;
-	bool fwrite : 1;
-	bool fexec : 1;
-	bool fdel : 1;
+	union {
+		uint8_t attr;
+		struct {
+			bool fdel : 1;
+			bool fexec : 1;
+			bool fwrite : 1;
+			bool fread : 1;
+			bool farch : 1;
+			bool fpure : 1;
+			bool fscript : 1;
+			bool fhold : 1;
+		};
+	};
 };
 
 bool sys_init();
