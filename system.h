@@ -133,4 +133,7 @@ uint32_t sys_djb2(const void *data, uint32_t len);
 uint32_t sys_fnv1a32(const void * data, uint32_t len);
 
 // @brief Use for merging hashes together
-uint32_t sys_hcombine(uint32_t in, uint32_t value);
+static inline uint32_t sys_hcombine(uint32_t in, uint32_t value)
+{
+	return in ^ (value + 0x9e3779b9 + (in << 6) + (in >> 2));
+}

@@ -871,11 +871,6 @@ uint32_t sys_djb2(const void *data, uint32_t len)
 	return hash;
 }
 
-uint32_t sys_hcombine(uint32_t in, uint32_t value)
-{
-	return in ^ (value + 0x9e3779b9 + (in << 6) + (in >> 2));
-}
-
 const char *const sys_ioerrmessage(uint32_t err)
 {
 	switch (err) {
