@@ -16,10 +16,39 @@ CXX := $(TOOLCHAIN)g++
 STRIP := $(TOOLCHAIN)strip
 CMD := cmd.exe
 
-CFLAGS := -m68010 -mtune=68010 -mcrt=nix13 -funsigned-char -flto -Os -fjump-tables -fomit-frame-pointer -foptimize-strlen -ffunction-sections -fdata-sections -I$(BUILD_DIR)
+CFLAGS := \
+	-m68010 \
+	-mtune=68010 \
+	-mcrt=nix13 \
+	-funsigned-char \
+	-Os \
+	-fjump-tables \
+	-fomit-frame-pointer \
+	-foptimize-strlen \
+	-ffunction-sections \
+	-fdata-sections \
+	-I$(BUILD_DIR)
+
 CXXFLAGS := -I$(BUILD_DIR)
-CPPFLAGS := -Wall -Wextra -Werror -Wno-error=unused-function -Wno-error=unused-parameter -Wno-error=unused-variable -Wno-missing-field-initializers -Wno-strict-aliasing -Wno-pointer-sign -Wno-ignored-qualifiers -Wno-switch -pipe
-LDFLAGS := -flto -mcrt=nix13 -Wl,--gc-sections -Wl,-Map=$(OUTPUT_MAP)
+
+CPPFLAGS := \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-Wno-error=unused-function \
+	-Wno-error=unused-parameter \
+	-Wno-error=unused-variable \
+	-Wno-missing-field-initializers \
+	-Wno-strict-aliasing \
+	-Wno-pointer-sign \
+	-Wno-ignored-qualifiers \
+	-Wno-switch \
+	-pipe
+
+LDFLAGS := \
+	-mcrt=nix13 \
+	-Wl,--gc-sections \
+	-Wl,-Map=$(OUTPUT_MAP)
 
 ifeq ($(NLOG), 1)
 CPPFLAGS := $(CPPFLAGS) -DNLOG
