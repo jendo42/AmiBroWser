@@ -136,8 +136,3 @@ bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count)
 	}
 	return true;
 }
-
-uint32_t buffer_size(buffer_t *buffer)
-{
-	return (uint32_t)buffer->count * buffer->size;
-}
