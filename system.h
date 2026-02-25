@@ -71,7 +71,7 @@ int sys_fprintf(BPTR fd, const char *format, ...);
 int sys_printf(const char *format, ...);
 int sys_sprintf(buffer_t *buffer, const char *format, ...);
 
-int sys_bstr2cstr(BSTR bstr, char *buffer);
+uint16_t sys_bstr2cstr(BSTR bstr, char *buffer, uint16_t size);
 const char *const sys_ioerrmessage(uint32_t err);
 
 // Does not alloc anything, only finds file part of the path.

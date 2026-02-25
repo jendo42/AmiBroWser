@@ -145,7 +145,7 @@ void sys_cleanup()
 	}
 }
 
-int sys_bstr2cstr(BSTR bstr, char *buffer)
+uint16_t sys_bstr2cstr(BSTR bstr, char *buffer, uint16_t size)
 {
 	if (bstr == 0) {
 		if (buffer) {
@@ -155,7 +155,7 @@ int sys_bstr2cstr(BSTR bstr, char *buffer)
 	}
 
 	UBYTE *ptr = (UBYTE *)BADDR(bstr);
-	int length = ptr[0];
+	uint16_t length = MIN(ptr[0], size - 1);
 	if (buffer) {
 		memcpy(buffer, ptr + 1, length);
 		buffer[length] = '\0';
@@ -205,8 +205,8 @@ uint32_t sys_listvol(buffer_t *array)
 		}
 
 		item->len = 0;
-		if (sys_bstr2cstr(list->dol_Name, NULL)) {
-			item->len = sys_bstr2cstr(list->dol_Name, item->name);
+		if (sys_bstr2cstr(list->dol_Name, NULL, 0)) {
+			item->len = sys_bstr2cstr(list->dol_Name, item->name, sizeof(item->name));
 		}
 
 		sys_fib2info(item, &fib);
