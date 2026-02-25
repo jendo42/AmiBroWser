@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#include "macros.h"
 #include "buffer.h"
 #include "timer.h"
 

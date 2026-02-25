@@ -1,8 +1,5 @@
 #pragma once
 
-#define STR(x) #x
-#define XSTR(x) STR(x)
-
 #ifdef NDEBUG
 	#define assert(x) ((void)(x))
 #else

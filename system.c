@@ -15,8 +15,6 @@
 
 #include "system.h"
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-
 LOG_FACILITY(System, LL_DEBUG);
 
 static systimer_t g_timer;
