@@ -45,11 +45,15 @@ int main(int argc, char *argv[])
 
 #ifndef NLOG
 	if (!process->pr_CLI) {
-		sys_attachconsole("BroWser Debug", 0, 0, 600, 200);
+		sys_attachconsole("AmiBroWser Debug", 0, 0, 600, 200);
 	}
 #endif // NLOG
 
-	LOG_INFO("BroWser v0.1 by Jendo");
+	LOG_INFO(
+		"AmiBroWser %s\n"
+		"Copyright (c) 2026 by Michal 'Jendo' Jenikovsky\n"
+		"This program comes with ABSOLUTELY NO WARRANTY.\n"
+	, XSTR(GIT_VERSION));
 	if (!sys_init()) {
 		return RETURN_FAIL;
 	}

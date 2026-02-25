@@ -1,9 +1,9 @@
 # project setup
-PROJ = amiga-demo
+PROJ = AmiBroWser
 BUILD_DIR = .build
 SRC_DIR = .
 VERSION_H = $(BUILD_DIR)/version.h
-OUTPUT = $(BUILD_DIR)/$(PROJ).exe
+OUTPUT = $(BUILD_DIR)/$(PROJ)
 OUTPUT_ICON = $(OUTPUT).info
 OUTPUT_MAP = $(BUILD_DIR)/$(PROJ).map
 HOST_OUTPUT = $(shell wslpath -a -w $(OUTPUT))
@@ -77,7 +77,7 @@ dump:
 	@echo $(SRCS_S)
 	@echo $(CC)
 
-generate_version:
+generate_version: $(BUILD_DIR)
 	@echo -n "#define GIT_VERSION " > $(VERSION_H).tmp
 	@git describe --tags --always --dirty 2> /dev/null >> $(VERSION_H).tmp || echo "unknown" >> $(VERSION_H).tmp
 	@cmp -s $(VERSION_H) $(VERSION_H).tmp || (mv $(VERSION_H).tmp $(VERSION_H) && echo "Generated '$(VERSION_H)'")

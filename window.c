@@ -16,7 +16,7 @@
 
 LOG_FACILITY(Window, LL_INFO);
 
-static const char g_title[] = "BroWser";
+static const char g_title[] = "AmiBroWser";
 
 typedef struct column_size column_size_t;
 
