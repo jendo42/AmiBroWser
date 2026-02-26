@@ -9,9 +9,16 @@
 #include "buffer.h"
 #include "timer.h"
 
+#ifdef __INTELLISENSE__
+	#ifndef __asm
+	#define __asm(x)
+	#endif
+#endif // __INTELLIESENSE__
+
 typedef struct fileinfo fileinfo_t;
 typedef enum containertype containertype_t;
 typedef int (*taskfunc_t)(struct Task *task, void *user);
+typedef int (*entryfunc_t)(char* cmd_line __asm("a0"), int32_t length __asm("d0"));
 typedef struct taskdata taskdata_t;
 typedef struct fakeseg fakeseg_t;
 
@@ -30,10 +37,10 @@ struct taskdata
 };
 
 struct fakeseg {
-	ULONG dosSize;       /* -8 bytes: So DOS knows how much to FreeMem */
-	ULONG nextBPTR;      /* -4 bytes: Pointer to next segment (0) */
-	UWORD jmpInstruction;/* +0 bytes: The M68k instruction */
-	void  (*entry)(void);/* +2 bytes: The address to jump to */
+	uint32_t size;			/* -8 bytes: So DOS knows how much to FreeMem */
+	uint32_t next;			/* -4 bytes: Pointer to next segment (0) */
+	uint16_t jump;			/* +0 bytes: The M68k instruction */
+	entryfunc_t entry;		/* +2 bytes: The address to jump to */
 	taskdata_t data;
 };
 

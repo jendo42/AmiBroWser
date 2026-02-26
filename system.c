@@ -730,8 +730,8 @@ struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t
 	struct MemList *ml = &memory->list;
 	ml->ml_Node.ln_Type = NT_MEMORY;
 	ml->ml_NumEntries = 1;
-	ml->ml_ME[0].me_Addr = (APTR)memory;       /* Point to the start of our giant block */
-	ml->ml_ME[0].me_Length = totalSize;    /* The total size to free */
+	ml->ml_ME[0].me_Addr = (APTR)memory;
+	ml->ml_ME[0].me_Length = totalSize;
 
 	NewList(&task->tc_MemEntry);
 	AddHead(&task->tc_MemEntry, &ml->ml_Node);
@@ -744,7 +744,7 @@ struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t
 
 	/* --- THE STACK MAGIC --- */
 	uint32_t *sp = (uint32_t *)task->tc_SPUpper;
-	*(--sp) = (uint32_t)user;   /* Push Arg 2 */
+	*(--sp) = (uint32_t)user; /* Push Arg 2 */
 	*(--sp) = (uint32_t)task; /* Push Arg 1 */
 	task->tc_SPReg = (APTR)sp;
 
@@ -752,13 +752,14 @@ struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t
 	return task;
 }
 
-static void sys_proc_enry()
+static int sys_proc_entry(char* cmd_line __asm("a0"), int32_t length __asm("d0"))
 {
 	struct Process* self = (struct Process *)FindTask(NULL);
 	fakeseg_t *seg = (fakeseg_t *)(((uint32_t *)BADDR(self->pr_SegList)) - 2);
 	if (seg->data.func) {
-		seg->data.func((struct Task *)self, seg->data.user);
+		return seg->data.func((struct Task *)self, seg->data.user);
 	}
+	return 0;
 }
 
 struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int8_t prio, uint32_t stack)
@@ -768,16 +769,17 @@ struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int
 		return NULL;
 	}
 
-	seg->dosSize = sizeof(fakeseg_t);
-	seg->nextBPTR = 0;
+	seg->size = sizeof(fakeseg_t);
+	seg->next = 0;
 
 	/* C. Build the M68k Trampoline */
-	seg->jmpInstruction = 0x4EF9; /* 0x4EF9 is the 68000 opcode for JMP (Absolute) */
-	seg->entry = sys_proc_enry;
+	/* 0x4EF9 is the 68000 opcode for JMP (Absolute) */
+	seg->jump = 0x4EF9;
+	seg->entry = sys_proc_entry;
 	seg->data.func = func;
 	seg->data.user = user;
 
-	BPTR bptrSeg = (BPTR)((ULONG)&seg->jmpInstruction >> 2);
+	BPTR bptrSeg = (BPTR)(((uint32_t)&seg->jump) >> 2);
 	struct MsgPort *newProc = CreateProc(name, prio, bptrSeg, stack);
 	if (!newProc) {
 		FreeMem(seg, sizeof(fakeseg_t));
