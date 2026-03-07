@@ -36,7 +36,7 @@
 #include "window.h"
 #include "requester.h"
 
-LOG_FACILITY(Main, LL_TRACE);
+LOG_FACILITY(Main, LL_INFO);
 
 extern int    __argc;
 extern char **__argv;

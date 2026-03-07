@@ -15,7 +15,7 @@
 
 #include "system.h"
 
-LOG_FACILITY(System, LL_DEBUG);
+LOG_FACILITY(System, LL_INFO);
 
 static systimer_t g_timer;
 static systimeval_t g_start;

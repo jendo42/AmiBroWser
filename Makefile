@@ -4,6 +4,8 @@ BUILD_DIR = .build
 SRC_DIR = .
 
 VERSION_H = $(BUILD_DIR)/version.h
+LOG_ITEMS = $(BUILD_DIR)/log_items.inc
+LOG_DEFS = $(BUILD_DIR)/log_defs.inc
 
 OUTPUT = $(BUILD_DIR)/$(PROJ)
 OUTPUT_ICON = $(OUTPUT).info
@@ -69,7 +71,7 @@ SRCS_H=$(wildcard $(SRC_DIR)/*.h)
 # List of object files generated from source files
 OBJS=$(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS)) $(patsubst $(SRC_DIR)/%.s, $(BUILD_DIR)/%.o, $(SRCS_S)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(SRCS_CPP))
 
-.PHONY: all generate_version
+.PHONY: all generate_version generate_log_items generate_log_defs
 
 all: $(OUTPUT)
 
@@ -87,19 +89,33 @@ generate_version: $(BUILD_DIR)
 
 $(VERSION_H): generate_version
 
+generate_log_items: $(BUILD_DIR)
+	@for i in `rgrep -h LOG_FACILITY *.c | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_ITEM($$i)" >> "$(LOG_ITEMS).tmp"; done
+	@cmp -s $(LOG_ITEMS) $(LOG_ITEMS).tmp || (mv $(LOG_ITEMS).tmp $(LOG_ITEMS) && echo "Generated '$(LOG_ITEMS)'")
+	@rm -f $(LOG_ITEMS).tmp
+
+$(LOG_ITEMS): generate_log_items
+
+generate_log_defs: $(BUILD_DIR)
+	@for i in `rgrep -h LOG_FACILITY *.c | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_DEF($$i)" >> "$(LOG_DEFS).tmp"; done
+	@cmp -s $(LOG_DEFS) $(LOG_DEFS).tmp || (mv $(LOG_DEFS).tmp $(LOG_DEFS) && echo "Generated '$(LOG_DEFS)'")
+	@rm -f $(LOG_DEFS).tmp
+
+$(LOG_DEFS): generate_log_defs
+
 # Generated object files
 $(BUILD_DIR):
 	@mkdir -pv $(BUILD_DIR)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(VERSION_H) $(SRCS_H) Makefile
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.s $(VERSION_H) $(LOG_DEFS) $(LOG_ITEMS) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
 	@$(CC) $(CPPFLAGS) -DBASE_FILE_NAME=$< -x assembler-with-cpp $(CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(VERSION_H) $(SRCS_H) Makefile
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(VERSION_H) $(LOG_DEFS) $(LOG_ITEMS) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
 	@$(CC) $(CPPFLAGS) $(CFLAGS) -DBASE_FILE_NAME=$< -c -o $@ $<
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(VERSION_H) $(SRCS_H) Makefile
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(VERSION_H) $(LOG_DEFS) $(LOG_ITEMS) $(SRCS_H) Makefile
 	@echo "Compiling '$<'"
 	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DBASE_FILE_NAME=$< -c -o $@ $<
 
@@ -118,7 +134,7 @@ endif
 	@du -bh "$@" | cut -f1
 
 clean:
-	@rm -fv $(OBJS) $(VERSION_H) $(OUTPUT) $(OUTPUT_ICON) $(OUTPUT_MAP)
+	@rm -fv $(OBJS) $(VERSION_H) $(OUTPUT) $(OUTPUT_ICON) $(OUTPUT_MAP) $(LOG_DEFS) $(LOG_ITEMS)
 
 deploy: $(OUTPUT)
 	@echo "Copying stripped '$(OUTPUT)' to floppy..."

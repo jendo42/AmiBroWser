@@ -8,7 +8,7 @@
 #include "buffer.h"
 #include "system.h"
 
-LOG_FACILITY(Requester, LL_TRACE);
+LOG_FACILITY(Requester, LL_INFO);
 
 static buffer_t g_buffer;
 static buffer_t g_lines;

@@ -8,7 +8,7 @@
 
 #include "browser.h"
 
-LOG_FACILITY(Browser, LL_TRACE);
+LOG_FACILITY(Browser, LL_INFO);
 
 static int __regargs browser_item_compare(const void *first, const void *second, void *user)
 {

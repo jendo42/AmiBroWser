@@ -13,7 +13,9 @@ enum loglevel {
 	LL_INFO,
 	LL_WARN,
 	LL_ERROR,
-	LL_FATAL
+	LL_FATAL,
+
+	LL_UNKNOWN,
 };
 
 struct logfacility
@@ -39,12 +41,16 @@ struct logfacility
 #else // NLOG
 
 	#define LOG_FACILITY(n, l) \
-	static logfacility_t g_staticFacility = { \
+	logfacility_t g_facility_##n = { \
 		.name = #n, \
 		.level = l, \
 		.locked = false \
 	}; \
-	static logfacility_t *g_facility = &g_staticFacility;
+	static logfacility_t *g_facility = &g_facility_##n;
+
+	#define LOG_FACILITY_ITEM(n) &g_facility_##n,
+
+	#define LOG_FACILITY_DEF(n) extern logfacility_t g_facility_##n;
 
 	#define LOG(level, format, ...) log_printf(level, g_facility, format, ##__VA_ARGS__)
 
@@ -58,5 +64,8 @@ struct logfacility
 #define LOG_FATAL(format, ...) LOG(LL_FATAL, format, ##__VA_ARGS__)
 
 const char *const log_levelstring(loglevel_t level);
+loglevel_t log_parselevel(const char *str);
+
+logfacility_t **log_facilitylist();
 void log_vprintf(loglevel_t level, logfacility_t *facility, const char *format, va_list args);
 void log_printf(loglevel_t level, logfacility_t *facility, const char *format, ...);

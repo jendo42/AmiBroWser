@@ -14,7 +14,7 @@
 #define UNIT_MICROHZ 0
 #endif
 
-LOG_FACILITY(Timer, LL_TRACE);
+LOG_FACILITY(Timer, LL_INFO);
 
 /* Initialize the timer device */
 bool timer_init(systimer_t *timer)
