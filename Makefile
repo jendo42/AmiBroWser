@@ -2,10 +2,12 @@
 PROJ = AmiBroWser
 BUILD_DIR = .build
 SRC_DIR = .
+
 VERSION_H = $(BUILD_DIR)/version.h
+
 OUTPUT = $(BUILD_DIR)/$(PROJ)
 OUTPUT_ICON = $(OUTPUT).info
-OUTPUT_MAP = $(BUILD_DIR)/$(PROJ).map
+OUTPUT_MAP = $(OUTPUT).map
 HOST_OUTPUT = $(shell wslpath -a -w $(OUTPUT))
 HOST_ICON = $(shell wslpath -a -w $(OUTPUT_ICON))
 
