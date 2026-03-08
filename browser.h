@@ -11,7 +11,8 @@ enum browser_ordering
 {
 	BO_NONE = 0,
 	BO_NAME = 1,
-	BO_TYPE = 2
+	BO_ICON = 2,
+	BO_TYPE = 4,
 };
 
 struct browser_state

@@ -53,7 +53,7 @@ struct fileinfo
 	containertype_t ctype : 2;
 
 	union {
-		uint8_t attr;
+		uint16_t attr;
 		struct {
 			bool fdel : 1;
 			bool fexec : 1;
@@ -63,6 +63,7 @@ struct fileinfo
 			bool fpure : 1;
 			bool fscript : 1;
 			bool fhold : 1;
+			bool ficon : 1;
 		};
 	};
 };

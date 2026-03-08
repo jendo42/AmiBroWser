@@ -27,12 +27,19 @@ static void sys_fib2info(fileinfo_t *item, struct FileInfoBlock *fib)
 {
 	if (!item->len) {
 		item->len = strlen(fib->fib_FileName);
-		memcpy(item->name, fib->fib_FileName, MIN(item->len, sizeof(item->name)));
+		assert((item->len + 1U) < sizeof(item->name));
+		memcpy(item->name, fib->fib_FileName, item->len + 1);
 	}
 	item->glen = 0;
 	item->hash = sys_djb2(item->name, item->len);
 	item->ctype = fib->fib_DirEntryType > 0 ? CT_DIR : CT_NONE;
 	item->attr = fib->fib_Protection & 0xFF;
+	if (item->len >= 5) {
+		char *ext = item->name + item->len - 5;
+		if (!strcmp(ext, ".info")) {
+			item->ficon = true;
+		}
+	}
 }
 
 static char *sprintf_callback(const char *buf, void *user, int len)

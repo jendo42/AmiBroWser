@@ -25,10 +25,16 @@ static int __regargs browser_item_compare(const void *first, const void *second,
 			result += 1;
 		}
 	}
-	if (ordering & BO_NAME) {
-		if (result == 0) {
-			result = strcmp(a->name, b->name);
+	if (ordering & BO_ICON && !result) {
+		if (a->ficon) {
+			result -= 1;
 		}
+		if (b->ficon) {
+			result += 1;
+		}
+	}
+	if (ordering & BO_NAME && !result) {
+		result = strcmp(a->name, b->name);
 	}
 	return result;
 }
@@ -59,7 +65,7 @@ bool browser_init(browser_t *browser, const char *path, bool release)
 	browser->error = 0;
 	browser->hash = 0;
 	browser->state = NULL;
-	browser->ordering = BO_NAME | BO_TYPE;
+	browser->ordering = BO_NAME | BO_TYPE | BO_ICON;
 	browser->descending = false;
 	return browser_push(browser, path, release);
 }

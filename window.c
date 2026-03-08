@@ -302,6 +302,9 @@ static void browser_window_refresh(browser_window_t *window)
 
 			// directory color
 			uint8_t targetPen = sys_iscontainer(item->ctype) ? 1 : 2;
+			if (item->ficon) {
+				targetPen = 3;
+			}
 			if (currentPen != targetPen) {
 				currentPen = targetPen;
 				SetAPen(rp, currentPen);
