@@ -1,10 +1,13 @@
 #include <stdlib.h>
 #include <memory.h>
-#include <libraries/dos.h>
+#include <string.h>
+
+#include <proto/dos.h>
 #include <proto/exec.h>
 #include <proto/icon.h>
-#include <workbench/startup.h>
 #include <proto/alib.h>
+
+#include <workbench/startup.h>
 #include <exec/types.h>
 
 #include "stb_sprintf.h"
@@ -17,11 +20,54 @@
 
 LOG_FACILITY(System, LL_INFO);
 
+extern int    __argc;
+extern char **__argv;
+extern uint32_t __commandlen;
+extern char *__commandline;
+
+extern struct WBStartup *_WBenchMsg;
+
+typedef struct launchwb launchwb_t;
+struct launchwb
+{
+	struct WBStartup startup;
+	struct WBArg args[2];
+	char toolName[108];
+	char projName[108];
+	uint32_t stack;
+	int32_t pri;
+	BPTR log;
+	BPTR tool;
+};
+
+// Disable command line parsing
+// argv and argc are null now
+// TODO: maybe reimplement the buggy argument parsing
+void __nocommandline(){};
+
 static systimer_t g_timer;
 static systimeval_t g_start;
 static const uint32_t g_maxprime = 4294967291;
+
 static buffer_t g_command;
-static BPTR g_con = 0;
+static buffer_t g_workdir;
+static buffer_t g_executable;
+static buffer_t g_commandline;
+static buffer_t g_tooltypes;
+static BPTR g_con;
+static struct DiskObject *g_dobj;
+
+static const char * const g_path[] = {
+	"",
+	"PROGDIR:",
+	"C:",
+	"SYS:System/",
+	"SYS:Utilities/",
+	"SYS:Tools/",
+	"SYS:Prefs/",
+	"SYS:WBStartup/",
+	NULL
+};
 
 static void sys_fib2info(fileinfo_t *item, struct FileInfoBlock *fib)
 {
@@ -60,6 +106,11 @@ static char *sprintf_callback_buffer(const char *buf, void *user, int len)
 
 bool sys_init()
 {
+	struct Process *process = (struct Process *)FindTask(NULL);
+	if (!_WBenchMsg && !process->pr_CLI) {
+		return false;
+	}
+	// initialize timer
 	if (!timer_init(&g_timer)) {
 		return false;
 	}
@@ -68,8 +119,127 @@ bool sys_init()
 		return false;
 	}
 
-	buffer_init(&g_command, 1, 128);
+	// initialize string buffers
+	buffer_init(&g_command, 1, 64);
+	buffer_init(&g_workdir, 1, 64);
+	buffer_init(&g_executable, 1, 64);
+	buffer_init(&g_commandline, 1, 64);
+	buffer_init(&g_tooltypes, sizeof(char *), 8);
+
+	// load path of current directory
+	sys_getpath(process->pr_CurrentDir, &g_workdir);
+	buffer_append(&g_workdir, "", 1);
+
+	// process arguments
+	if (process->pr_CLI) {
+		// Parse argv and enter main processing loop.
+		struct CommandLineInterface * cli = (struct CommandLineInterface *)BADDR(process->pr_CLI);
+		char *cmdname = (char *)BADDR(cli->cli_CommandName);
+
+		// reconstruct full path to executable
+		buffer_append_string(&g_executable, g_workdir.data, false);
+		buffer_append(&g_executable, cmdname + 1, *cmdname);
+		buffer_append(&g_executable, "", 1);
+
+		// reconstruct full program command line
+		buffer_append(&g_commandline, "\"", 1);
+		buffer_append(&g_commandline, cmdname + 1, *cmdname);
+		buffer_append(&g_commandline, "\"", 1);
+		if (__commandlen) {
+			buffer_append(&g_commandline, " ", 1);
+			buffer_append(&g_commandline, __commandline, __commandlen);
+		}
+		char *back = (char *)buffer_back(&g_commandline);
+		if (*back == '\n') {
+			*back = 0;
+		} else {
+			buffer_append(&g_commandline, "", 1);
+		}
+
+		LOG_DEBUG("CLI Args: '%s'", g_commandline.data);
+		if (SysBase->LibNode.lib_Version >= 36) {
+			// load pr_Arguments
+			LOG_DEBUG("pr_Arguments: %s", process->pr_Arguments);
+		}
+	} else if (_WBenchMsg) {
+		// Parse wbstartup and enter main processing loop.
+		struct WBStartup *startup = _WBenchMsg;
+		LOG_DEBUG("WB Args: %d; sm_ToolWindow: '%s'", startup->sm_NumArgs, startup->sm_ToolWindow);
+		for (int i = 0; i < startup->sm_NumArgs; i++) {
+			struct WBArg *arg = startup->sm_ArgList + i;
+			LOG_DEBUG("Arg[%u] -> %p; '%s'", i, arg->wa_Lock, arg->wa_Name);
+		}
+
+		// reconstruct full path to executable
+		sys_getpath(startup->sm_ArgList[0].wa_Lock, &g_executable);
+		buffer_append_string(&g_executable, startup->sm_ArgList[0].wa_Name, true);
+	}
+
+	// load toolset params
+	g_dobj = GetDiskObject(sys_exepath());
+	if (g_dobj) {
+		for (char **it = (char **)g_dobj->do_ToolTypes; *it; it++) {
+			char *tooltype = *it;
+			char **back = (char **)buffer_emplace_back(&g_tooltypes);
+			if (back) {
+				*back = tooltype;
+			}
+			LOG_DEBUG("tooltype -> '%s'", tooltype);
+		}
+	}
+
+	LOG_DEBUG("Executable: '%s'", g_executable.data);
+	LOG_DEBUG("Workdir: '%s'", sys_workdirpath());
+	LOG_DEBUG("Debug: '%s'", sys_matchtooltype("DEBUG"));
 	return true;
+}
+
+void sys_cleanup()
+{
+	LOG_DEBUG("Cleanup");
+	if (g_dobj) {
+		FreeDiskObject(g_dobj);
+		g_dobj = NULL;
+	}
+
+	buffer_cleanup(&g_command);
+	buffer_cleanup(&g_workdir);
+	buffer_cleanup(&g_executable);
+	buffer_cleanup(&g_commandline);
+	buffer_cleanup(&g_tooltypes);
+	timer_cleanup(&g_timer);
+
+	struct Process *proc = (struct Process *)FindTask(NULL);
+	if (proc->pr_CIS == g_con) {
+		proc->pr_CIS = 0;
+	}
+	if (proc->pr_COS == g_con) {
+		proc->pr_COS = 0;
+	}
+	if (g_con) {
+		Close(g_con);
+		g_con = 0;
+	}
+}
+
+const char *sys_matchtooltype(const char *key)
+{
+	char **tooltypes = (char **)buffer_at(&g_tooltypes, 0);
+	uint16_t len = strlen(key);
+	for (uint16_t i = 0; i < g_tooltypes.count; i++, tooltypes++) {
+		char *tooltype = *tooltypes;
+		if (!memcmp(tooltype, key, len)) {
+			char *value = tooltype + len;
+			switch (*value) {
+				case '=':
+					return value + 1;
+				case 0:
+					return value;
+			}
+		}
+	}
+
+	return NULL;
 }
 
 int sys_vfprintf(BPTR fd, const char *format, va_list args)
@@ -131,24 +301,6 @@ void sys_gettime(systimeval_t *time)
 		timer_diff(&g_start, time);
 	} else {
 		memset(time, 0, sizeof(*time));
-	}
-}
-
-void sys_cleanup()
-{
-	LOG_DEBUG("Cleanup");
-	timer_cleanup(&g_timer);
-	buffer_cleanup(&g_command);
-	struct Process *proc = (struct Process *)FindTask(NULL);
-	if (proc->pr_CIS == g_con) {
-		proc->pr_CIS = 0;
-	}
-	if (proc->pr_COS == g_con) {
-		proc->pr_COS = 0;
-	}
-	if (g_con) {
-		Close(g_con);
-		g_con = 0;
 	}
 }
 
@@ -220,7 +372,7 @@ uint32_t sys_listvol(buffer_t *array)
 		item->ctype = sys_dlt2ct(list->dol_Type);
 		hash = sys_hcombine(hash, item->hash);
 
-		LOG_TRACE("Listvol: Found T%d: %s", (int)item->ctype, item->name);
+		LOG_TRACE("Listvol: Found %s '%s'", sys_ctmessage(item->ctype), item->name);
 	} while ((list = (struct DosList *)BADDR(list->dol_Next)));
 
 	Permit();
@@ -274,9 +426,7 @@ uint32_t sys_listdir(const char *path, buffer_t *array)
 		sys_fib2info(item, &fib);
 		hash = sys_hcombine(hash, item->hash);
 
-		// Print the name found in the FIB
-		// In a real app, you would add this string to your ListView array here
-		LOG_TRACE("Listdir: Found: '%s' (%s)", fib.fib_FileName, fib.fib_DirEntryType > 0 ? "DIR" : "FIL");
+		LOG_TRACE("Listdir: Found %s '%s'", sys_ctmessage(item->ctype), item->name);
 	}
 
 	array->user = (void *)hash;
@@ -299,6 +449,17 @@ bool sys_iscontainer(containertype_t ct)
 		default:
 			return false;
 	}
+}
+
+char *sys_isicon(const char *path)
+{
+	if (path) {
+		char *dot = strrchr(path, '.');
+		if (dot && !strcmp(dot, ".info")) {
+			return dot;
+		}
+	}
+	return NULL;
 }
 
 uint32_t sys_examine(const char *path, fileinfo_t *item)
@@ -338,30 +499,6 @@ uint32_t sys_examine(const char *path, fileinfo_t *item)
 	return 0;
 }
 
-static void sys_command(buffer_t *buffer, const char *tool, const char *path, uint32_t stack, bool wait)
-{
-	buffer_clear(buffer);
-
-	if (stack) {
-		sys_sprintf(buffer, "Stack %d\n", stack);
-	}
-
-	if (!wait) {
-		sys_sprintf(buffer, "Run >NIL: <NIL: ");
-	}
-
-	// silent
-	//sys_sprintf(buffer, "");
-
-	sys_sprintf(buffer, "\"%s\"", tool);
-	if (path) {
-		sys_sprintf(buffer, " \"%s\"", path);
-	}
-
-	//sys_sprintf(buffer, "If Warn\nRequestChoice \"BroWser\" \"'%s' failed with code: $RC\"\nEndIf\n", path);
-	buffer_append(buffer, "\n", 2);
-}
-
 uint32_t sys_changedir(const char *path)
 {
 	BPTR lock = Lock(path, ACCESS_READ);
@@ -375,25 +512,29 @@ uint32_t sys_changedir(const char *path)
 	return 0;
 }
 
-uint32_t sys_which(const char *tool, buffer_t *buffer)
+const char *sys_workdirpath()
 {
-	char *tmpname;
-	uint32_t result = 0;
-	BPTR tmp = sys_tmpfile(&tmpname);
-	sys_command(&g_command, "Which", tool, 0, true);
-	if (!Execute(g_command.data, 0, tmp)) {
-		result = IoErr();
+	return g_workdir.count ? g_workdir.data : NULL;
+}
+
+const char *sys_exepath()
+{
+	return g_executable.count ? g_executable.data : NULL;
+}
+
+existsresult_t sys_exists(const char *path)
+{
+	if (path && *path) {
+		BPTR targetLock = Lock(path, ACCESS_READ);
+		if (targetLock) {
+			struct FileInfoBlock fib;
+			Examine(targetLock, &fib);
+			UnLock(targetLock);
+			return fib.fib_DirEntryType < 0 ? ER_IS_FILE : ER_IS_DIRECTORY;
+		}
 	}
-	if (!result) {
-		Seek(tmp, 0, OFFSET_END);
-		uint32_t size = Seek(tmp, 0, OFFSET_BEGINNING);
-		buffer_clear(buffer);
-		buffer_append_file(buffer, tmp, size);
-	}
-	Close(tmp);
-	DeleteFile(tmpname);
-	free(tmpname);
-	return result;
+
+	return ER_NO_EXISTS;
 }
 
 uint32_t sys_getpath(BPTR lock, buffer_t *buffer)
@@ -427,6 +568,8 @@ uint32_t sys_getpath(BPTR lock, buffer_t *buffer)
 		// don't have to be null terminated here
 		*name = strlen(fib.fib_FileName);
 		strcpy(name + 1, fib.fib_FileName);
+
+		// generate separator for directory
 		if (fib.fib_DirEntryType > 0) {
 			name[*name + 1] = parentLock ? '/' : ':';
 			*name = *name + 1;
@@ -462,204 +605,244 @@ BPTR sys_tmpfile(char **name)
 	return Open(g_command.data, MODE_NEWFILE);
 }
 
-uint32_t sys_execute(char *path, bool wait, BPTR input, BPTR output)
+uint32_t sys_execute(char *path, const char *arguments, const char *workdir, uint32_t stack, BPTR input, BPTR output)
 {
-	LOG_DEBUG("Execute (%s, %s)", path, wait ? "true" : "false");
+	LOG_DEBUG("Execute (%s, %s)", path, workdir);
 	assert(path != NULL);
 
 	uint32_t result = 0;
-	char *dot = strrchr(path, '.');
-	if (dot) {
-		// temporaly remove extension
-		*dot = 0;
+	if (!arguments) {
+		arguments = "";
 	}
 
-	// decide what to do with the file
-	struct DiskObject *dobj = GetDiskObject(path);
-	if (dot) {
-		// restore extension
-		*dot = '.';
-	}
-
-	uint32_t stack = 0;
-	char *tool = path;
-	if (dobj) {
-		// TODO: pass tool types
-		// fetch .info metadata
-		switch (dobj->do_Type) {
-			case WBPROJECT:
-				tool = dobj->do_DefaultTool;
-				break;
-			case WBTOOL:
-				path = NULL;
-				break;
+	BPTR wdlock = 0;
+	if (workdir) {
+		// lock working dir
+		wdlock = Lock(workdir, ACCESS_READ);
+		if (!wdlock) {
+			LOG_DEBUG("Failed to lock workdir '%s'", workdir);
+			return IoErr();
 		}
-		stack = dobj->do_StackSize;
-		if (stack < 4096) {
-			stack = 4096;
-		}
-	} else {
-		path = NULL;
 	}
 
-	sys_command(&g_command, tool, path, stack, wait);
+	// change to working dir and save previous
+	BPTR oldlock = 0;
+	if (wdlock) {
+		oldlock = CurrentDir(wdlock);
+	}
+
+	// generate launch script
+	buffer_clear(&g_command);
+	if (stack) {
+		sys_sprintf(&g_command, "Stack %d\n", stack);
+	}
+	sys_sprintf(&g_command, "\"%s\" %s\n", path, arguments);
+
 	LOG_DEBUG("Execute: Command: ----8<----\n%s----8<----", g_command.data);
 	if (!Execute(g_command.data, input, output)) {
 		result = IoErr();
 	}
 
-	FreeDiskObject(dobj);
+	// restore current dir
+	if (wdlock) {
+		CurrentDir(oldlock);
+		UnLock(wdlock);
+	}
 	return result;
 }
 
-// TODO: right now not working correctly
-uint32_t sys_launchwb(struct DiskObject *dobj, char *path)
+static int sys_launchwb_proc(struct Task *task, void *user)
 {
-	buffer_t buffer;
-	buffer_init(&buffer, 1, 128);
+	struct Process *process = (struct Process *)task;
+	launchwb_t *data = (launchwb_t *)user;
 
-	LOG_DEBUG("LaunchWB (%p, %s)", dobj, path);
-	for (unsigned char **it = dobj->do_ToolTypes; *it; it++) {
-		char *tooltype = *it;
-		LOG_DEBUG("LaunchWB: tooltype -> '%s'", tooltype);
+	data->startup.sm_Message.mn_ReplyPort = &process->pr_MsgPort;
+
+	Forbid();
+	struct MsgPort *port = CreateProc(data->toolName, data->pri, data->startup.sm_Segment, data->stack);
+	if (port) {
+		struct Process *proc = (struct Process *)((UBYTE *)port - sizeof(struct Task));
+		proc->pr_COS = data->log;
+		data->startup.sm_Process = port;
+		PutMsg(port, (struct Message *)&data->startup);
+	}
+	Permit();
+
+	if (port) {
+		WaitPort(&process->pr_MsgPort);
+		struct Message *msg = GetMsg(&process->pr_MsgPort);
+		assert(msg == &data->startup.sm_Message);
 	}
 
-	// get full path to tool
-	bool isProject = dobj->do_Type == WBPROJECT;
-	char *tool = isProject ? (char *)dobj->do_DefaultTool : path;
-	uint32_t result = sys_which(tool, &buffer);
-	if (result) {
-		LOG_DEBUG("LaunchWB: sys_which failed: %d", result);
-		buffer_cleanup(&buffer);
-		return result;
+	Forbid();
+	UnLoadSeg(data->startup.sm_Segment);
+	if (data->tool) {
+		UnLock(data->tool);
 	}
-	//if (((char *)buffer.data)[buffer.count - 1] == '\n') {
-	//	buffer_pop_back(&buffer);
-	//}
-	buffer_append(&buffer, "", 1);
+	for (uint16_t i = 0; i < data->startup.sm_NumArgs; i++) {
+		UnLock(data->startup.sm_ArgList[i].wa_Lock);
+	}
+	FreeMem(data, sizeof(launchwb_t));
+	return 0;
+}
 
-	tool = (char *)buffer.data;
-	const char *toolfile = sys_filepart(tool);
+uint32_t sys_launchwb(const char *path)
+{
+	LOG_DEBUG("LaunchWB (%s)", path);
 
-	LOG_DEBUG("LaunchWB: Tool: '%s'; ToolFile: '%s'", tool, toolfile);
-
-	/*
-	BPTR tooldir = Lock(tool, ACCESS_READ);
-	if (tooldir) {
-		BPTR p = ParentDir(tooldir);
-		UnLock(tooldir);
-		tooldir = p;
+	struct DiskObject *dobj = GetDiskObject(path);
+	if (!dobj) {
+		LOG_DEBUG("LaunchWB: GetDiskObject(%s) failed", path);
+		return IoErr();
 	}
 
-	BPTR argdir = 0;
-	const char *argfile = NULL;
-	(void)argfile;
-	if (isProject) {
-		argfile = sys_filepart(path);
-		argdir = Lock(path, ACCESS_READ);
-		if (argdir) {
-			BPTR p = ParentDir(argdir);
-			UnLock(argdir);
-			argdir = p;
-		}
-		if (!argdir) {
-			LOG_DEBUG("LaunchWB: argdir failed (%p, %s)", dobj, path);
-			UnLock(tooldir);
-			return IoErr();
-		}
-	}
-	*/
-
-	uint32_t stack = 0;
-	if (dobj->do_Type == WBTOOL) {
-		stack = dobj->do_StackSize;
-	}
+	LONG stack = dobj->do_StackSize;
 	if (stack < 4096) {
 		// minimal stack size
 		stack = 4096;
 	}
 
-	BPTR seglist = LoadSeg(tool);
-	if (!seglist) {
-		LOG_DEBUG("LaunchWB: LoadSeg(%s) failed", tool);
-		//UnLock(tooldir);
-		//UnLock(argdir);
-		buffer_cleanup(&buffer);
+	UBYTE type = dobj->do_Type;
+
+	// get full path to tool
+	const char *proj = NULL;
+	const char *tool = NULL;
+	switch (type) {
+		case WBPROJECT:
+			tool = (char *)dobj->do_DefaultTool;
+			proj = path;
+			break;
+		case WBTOOL:
+			tool = path;
+			break;
+		default:
+			FreeDiskObject(dobj);
+			return ERROR_OBJECT_WRONG_TYPE;
+	}
+
+	// locate the tool in system
+	// hardcoded paths for compatibility
+	// TODO: maybe som improvement by config file?
+	BPTR toolLock = 0;
+	for (const char * const * it = g_path; *it; it++) {
+		const char * const pathdir = *it;
+		buffer_clear(&g_command);
+		buffer_append_string(&g_command, pathdir, false);
+		buffer_append_string(&g_command, tool, true);
+		if (sys_exists(g_command.data) == ER_IS_FILE) {
+			toolLock = Lock(g_command.data, ACCESS_READ);
+			break;
+		}
+	}
+	if (!toolLock) {
+		// tool not found
+		LOG_DEBUG("LaunchWB: tool '%s' not found", tool);
+		FreeDiskObject(dobj);
 		return IoErr();
 	}
 
-	struct WBStartup *msg = (struct WBStartup *)AllocMem(sizeof(struct WBStartup), MEMF_PUBLIC | MEMF_CLEAR);
-	if (!msg) {
-		//UnLock(tooldir);
-		//UnLock(argdir);
-		UnLoadSeg(seglist);
-		buffer_cleanup(&buffer);
+	// get full path of real locked file
+	// (normalize the string especially on OS2.0+)
+	sys_getpath(toolLock, &g_command);
+	buffer_append(&g_command, "", 1);
+	tool = (char *)g_command.data;
+
+	// parent dir of tool
+	BPTR toolDir = ParentDir(toolLock);
+	if (!toolDir) {
+		LOG_DEBUG("LaunchWB: tool '%s' dir lock failed", tool);
+		UnLock(toolLock);
+		FreeDiskObject(dobj);
 		return IoErr();
 	}
 
-	// initialize WBStartup message
-	// allocate one item more, make it null (sentinel)
+	// locate the project (by the very special way)
+	// we do not need the file to exist, just pass the
+	// path to disk object without .info extension
+	BPTR projDir = 0;
+	if (proj) {
+		char *filepart = (char *)sys_filepart(proj);
+		char backup = filepart[-1];
+		filepart[-1] = 0;
+		projDir = Lock(proj, ACCESS_READ);
+		filepart[-1] = backup;
+	}
+
+	// get the default stack size for the tool
+	struct DiskObject *tooldobj = GetDiskObject(tool);
+	if (tooldobj) {
+		if (tooldobj->do_StackSize > stack) {
+			stack = tooldobj->do_StackSize;
+		}
+		FreeDiskObject(tooldobj);
+	}
+
+	// close DiskObject as early as possible to free the memory
+	LOG_DEBUG("LaunchWB: tool: '%s'; proj: '%s';", tool, proj);
+	FreeDiskObject(dobj);
+
+	// alloc data
+	launchwb_t *data = (launchwb_t *)AllocMem(sizeof(launchwb_t), MEMF_PUBLIC | MEMF_CLEAR);
+	if (!data) {
+		// TODO: release all locks
+		LOG_DEBUG("LaunchWB: AllocMem(data) failed");
+		goto exit_ioerr_locks;
+	}
+
+	// alloc seglist
+	data->startup.sm_Segment = LoadSeg(tool);
+	if (!data->startup.sm_Segment) {
+		LOG_DEBUG("LaunchWB: LoadSeg '%s' failed (%d)", tool, IoErr());
+		goto exit_ioerr_data_locks;
+	}
+
+	// fill-up stack size and priority
+	data->stack = stack;
+	data->pri = 0;
+
+	LOG_DEBUG("LaunchWB: stack: %u; pri: %u;", data->stack, data->pri);
+
+	// populate arguments
 	int numArgs = 0;
-	msg->sm_NumArgs = numArgs + 1;
-	msg->sm_ArgList = (struct WBArg *)AllocMem(sizeof(struct WBArg) * (numArgs + 1), MEMF_PUBLIC | MEMF_CLEAR);
+	data->args[numArgs].wa_Lock = toolDir;
+	data->args[numArgs].wa_Name = data->toolName;
+	strcpy(data->toolName, sys_filepart(tool));
+	++numArgs;
 
-	// arg 0
-	msg->sm_ArgList[0].wa_Lock = 0; /* Pass the lock directly */
-	msg->sm_ArgList[0].wa_Name = NULL;
-	//msg->sm_ArgList[0].wa_Name = (char *)AllocMem(strlen(toolfile) + 1, MEMF_PUBLIC);
-	//strcpy(msg->sm_ArgList[0].wa_Name, toolfile);
-
-	// arg 1
-	//if (isProject) {
-	//	msg->sm_ArgList[1].wa_Lock = argdir; /* Pass the lock directly */
-	//	msg->sm_ArgList[1].wa_Name = (char *)AllocMem(strlen(argfile) + 1, MEMF_PUBLIC);
-	//	strcpy(msg->sm_ArgList[1].wa_Name, argfile);
-	//}
-
-	/* Setup Message Header */
-	msg->sm_Message.mn_Node.ln_Type = NT_MESSAGE;
-	msg->sm_Message.mn_Length = sizeof(struct WBStartup);
-
-	/* ReplyPort: Where the program replies when it exits.
-	   Usually we create a port if we want to wait, or NULL if we fire-and-forget.
-	   BUT: standard WB programs reply to this. We must handle it or memory leaks.
-	   For a simple launcher, we often cheat and set ReplyPort to NULL
-	   (the system will reclaim process resources, but message memory might leak).
-
-	   PROPER WAY: Create a persistent background process (your "Workbench")
-	   that listens to this port. For this snippet, we will set NULL
-	   and rely on the OS to clean up the Process structure,
-	   but we essentially "leak" the WBStartup struct until reboot.
-
-	   *BETTER HACK:* Set mn_ReplyPort to a port you control, wait for it,
-	   then free memory. If you want fire-and-forget, creating a tiny
-	   "cleanup" task is required.
-	*/
-	msg->sm_Message.mn_ReplyPort = NULL;
-
-	/* ToolTypes (Optional) */
-	/* You would copy the char** array from the DiskObject here */
-	msg->sm_ToolWindow = NULL;
-
-	int32_t pri = 0;
-	struct Process *proc = (struct Process *)CreateProc(toolfile, pri, seglist, stack);
-	if (!proc) {
-		// TODO: free allocated arguments
-		FreeMem(msg, sizeof(struct WBStartup));
-		//UnLock(tooldir);
-		//UnLock(argdir);
-		UnLoadSeg(seglist);
-		buffer_cleanup(&buffer);
-		return IoErr();
+	if (proj && projDir) {
+		data->args[numArgs].wa_Lock = projDir;
+		data->args[numArgs].wa_Name = data->projName;
+		strcpy(data->projName, sys_filepart(proj));
+		++numArgs;
 	}
 
-	/* 5. Launch! */
-	/* Put the message into the new process's Message Port */
-	PutMsg(&proc->pr_MsgPort, (struct Message *)msg);
+	// populate rest of the startup structure
+	data->startup.sm_NumArgs = numArgs;
+	data->startup.sm_ArgList = data->args;
+	data->startup.sm_Message.mn_Node.ln_Type = NT_MESSAGE;
+	data->startup.sm_Message.mn_Length = sizeof(struct WBStartup);
+	data->log = Output();
+	data->tool = toolLock;
 
-	// Clean up our local locks (duplicated in message)
-	// No need to unlock the `argdir` or `tooldir` here
-	buffer_cleanup(&buffer);
+	struct MsgPort *port = sys_spawnproc(&sys_launchwb_proc, data, "LaunchWB", 0, 512);
+	LOG_DEBUG("LaunchWB: sys_spawnproc: %p, %d", port, IoErr());
+	if (!port) {
+		UnLoadSeg(data->startup.sm_Segment);
+exit_ioerr_data_locks:
+		FreeMem(data, sizeof(launchwb_t));
+exit_ioerr_locks:
+		if (toolLock) {
+			UnLock(toolLock);
+		}
+		if (toolDir) {
+			UnLock(toolDir);
+		}
+		if (projDir) {
+			UnLock(projDir);
+		}
+		return !data ? ERROR_NO_FREE_STORE : IoErr();
+	}
+
 	return 0;
 }
 
@@ -887,6 +1070,22 @@ uint32_t sys_djb2(const void *data, uint32_t len)
 	}
 
 	return hash;
+}
+
+const char *const sys_ctmessage(containertype_t type)
+{
+	switch (type) {
+	case CT_NONE:
+		return "fil";
+	case CT_DIR:
+		return "dir";
+	case CT_DEV:
+		return "dev";
+	case CT_VOL:
+		return "vol";
+	default:
+		return "unk";
+	}
 }
 
 const char *const sys_ioerrmessage(uint32_t err)

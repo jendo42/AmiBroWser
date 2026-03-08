@@ -136,3 +136,16 @@ bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count)
 	}
 	return true;
 }
+
+bool buffer_append_string(buffer_t *buffer, const char *str, bool null_terminate)
+{
+	uint16_t len = strlen(str);
+	if (len) {
+		if (null_terminate) {
+			++len;
+		}
+		return buffer_append(buffer, str, len);
+	}
+
+	return false;
+}

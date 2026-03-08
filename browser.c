@@ -91,7 +91,7 @@ void browser_cleanup(browser_t *browser)
 
 bool browser_push(browser_t *browser, const char *path, bool release)
 {
-	LOG_DEBUG("Push (%p, %s)", browser, path);
+	LOG_DEBUG("Push (%p, '%s')", browser, path);
 	browser_state_t *state = (browser_state_t *)buffer_emplace_back(&browser->stack);
 	if (!state) {
 		return false;
@@ -157,7 +157,7 @@ bool browser_refresh(browser_t *browser)
 	PROFILE_END("Refresh/sys_listdir");
 
 	if (err) {
-		LOG_DEBUG("Refresh: %d: %s", err, sys_ioerrmessage(err));
+		LOG_DEBUG("Refresh: failed, %s", sys_ioerrmessage(err));
 		return false;
 	}
 
@@ -216,6 +216,9 @@ bool browser_open(browser_t *browser, const char *path)
 	browser_state_t *state = browser->state;
 	assert(state != NULL);
 
+	// working directory path
+	const char *basePath = state->path;
+
 	// prepare path as malloced string
 	if (path) {
 		// amiga standard level-up
@@ -229,8 +232,7 @@ bool browser_open(browser_t *browser, const char *path)
 			return false;
 		}
 
-		uint32_t err = sys_examine(path, &info);
-		valid = !err;
+		valid = !sys_examine(path, &info);
 	} else {
 		fileinfo_t **pinfo = (fileinfo_t **)buffer_at(&browser->sorted, state->cursor);
 		assert(pinfo != NULL);
@@ -242,7 +244,6 @@ bool browser_open(browser_t *browser, const char *path)
 		valid = true;
 
 		// generate full path for selected file
-		const char *basePath = browser_currentpath(browser);
 		const char *format = basePath ? "%s%s/" : "%s%s:";
 		if (!basePath) {
 			basePath = "";
@@ -267,43 +268,59 @@ bool browser_open(browser_t *browser, const char *path)
 		path = buffer.data;
 	}
 
-	// NOTE: path should be malloc-ed here
 	if (valid) {
-		LOG_INFO("Opening: CT%u '%s'", (int)info.ctype, path);
+		LOG_INFO("Opening: %s '%s'", (info.ficon ? "icon" : sys_ctmessage(info.ctype)), path);
 	}
-	bool result = browser_push(browser, path, true);
 
 	// selected item is file
 	if (valid && info.ctype == CT_NONE) {
-		char *tmpname = NULL;
-		BPTR out = sys_tmpfile(&tmpname);
+		// check if opening icon
+		uint32_t err = 0;
+		if (info.ficon) {
+			// temporarily remove .info extension
+			char *doticon = sys_isicon(path);
+			*doticon = 0;
+			err = sys_launchwb(path);
+			if (err == ERROR_OBJECT_WRONG_TYPE) {
+				// trying to open drawer from icon file
+				doticon[0] = '/';
+				doticon[1] = 0;
+				return browser_push(browser, path, true);
+			} else {
+				// restore path
+				*doticon = '.';
+				browser_push(browser, path, true);
+			}
+		} else {
+			// not icon, execute as CLI command
+			// result of the execution will be displayed
+			// in the window
+			browser_push(browser, path, true);
 
-		// change current directory to path
-		// TODO:
-		//sys_changedir(state->path);
+			char *tmpname = NULL;
+			BPTR out = sys_tmpfile(&tmpname);
 
-		uint32_t err = sys_execute((char *)path, true, 0, out);
+			err = sys_execute((char *)path, NULL, basePath, 0, 0, out);
+
+			Seek(out, 0, OFFSET_END);
+			uint32_t size = Seek(out, 0, OFFSET_BEGINNING);
+			buffer_clear(&browser->message);
+			buffer_append_file(&browser->message, out, size);
+
+			Close(out);
+			DeleteFile(tmpname);
+			free(tmpname);
+		}
+
 		browser->error = err;
-
-		Seek(out, 0, OFFSET_END);
-		uint32_t size = Seek(out, 0, OFFSET_BEGINNING);
-		buffer_clear(&browser->message);
-		buffer_append_file(&browser->message, out, size);
-		Close(out);
-		DeleteFile(tmpname);
-		free(tmpname);
-
-		//systimeval_t time;
-		//sys_gettime(&time);
 		browser->hash = sys_djb2(browser->message.data, browser->message.count);
 		browser->hash = sys_hcombine(browser->hash, err);
-		//browser->hash = sys_hcombine(browser->hash, time.tv_sec ^ time.tv_usec);
-		LOG_TRACE("Open: '%s' exited with code %d; Hash: %.8X", path, err, browser->hash);
+		LOG_TRACE("Open: '%s' done with code %d; Hash: %.8X", path, err, browser->hash);
 		return err ? false : true;
 	}
 
-	// selected item is container
-	return result;
+	// selected item is container, push history
+	return browser_push(browser, path, true);
 }
 
 bool browser_up(browser_t *browser)

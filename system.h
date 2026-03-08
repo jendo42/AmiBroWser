@@ -17,6 +17,7 @@
 
 typedef struct fileinfo fileinfo_t;
 typedef enum containertype containertype_t;
+typedef enum existsresult existsresult_t;
 typedef int (*taskfunc_t)(struct Task *task, void *user);
 typedef int (*entryfunc_t)(char* cmd_line __asm("a0"), int32_t length __asm("d0"));
 typedef struct taskdata taskdata_t;
@@ -28,6 +29,13 @@ enum containertype
 	CT_DIR,
 	CT_DEV,
 	CT_VOL
+};
+
+enum existsresult
+{
+	ER_NO_EXISTS,
+	ER_IS_DIRECTORY,
+	ER_IS_FILE
 };
 
 struct taskdata
@@ -68,7 +76,14 @@ struct fileinfo
 	};
 };
 
+// Performs low-level system initialization sequence
+//  - program argument preparation / parsing,
+//  - executable path reconstruction,
+//  - tooset parameters load
+//  - yada, yada, yada, ...
 bool sys_init();
+
+// Cleans-up memory allocated by `sys_init()`
 void sys_cleanup();
 
 int sys_vfprintf(BPTR fd, const char *format, va_list args);
@@ -81,6 +96,7 @@ int sys_sprintf(buffer_t *buffer, const char *format, ...);
 
 uint16_t sys_bstr2cstr(BSTR bstr, char *buffer, uint16_t size);
 const char *const sys_ioerrmessage(uint32_t err);
+const char *const sys_ctmessage(containertype_t type);
 
 // Does not alloc anything, only finds file part of the path.
 const char * sys_filepart(const char* path);
@@ -95,6 +111,9 @@ void sys_gettime(systimeval_t *time);
 
 struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t prio, uint32_t stack);
 struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int8_t prio, uint32_t stack);
+
+// @returns `true` if the `path` is lockable (file/dir have to exists)
+existsresult_t sys_exists(const char *path);
 
 // Walks thru all parent locks up and generates full path of `lock`.
 // If the `lock` itself is a directory, the path will have trailing
@@ -111,25 +130,29 @@ BPTR sys_tmpfile(char **name);
 // @returns DOS Error code
 uint32_t sys_changedir(const char *dir);
 
-// Finds tool in system path
-// @param `tool` tool name / path
-// @param `buffer` returns full path to the tool
-// @returns DOS Error Code
-uint32_t sys_which(const char *tool, buffer_t *buffer);
+// @returns Cached full path to the current working directory
+const char *sys_workdirpath();
 
-// Automatically detects file type (specified by `cmdline`) and tries to launch the Tool/Project.
-// When .info file exits, `sys_launchwb()` is called automatically on that object
-// @param `cmdline` must be writable and will be modified when called
-// @param `wait` whether wait for program to exit
+// @returns Cached full path to the EXE file
+const char *sys_exepath();
+
+// @returns Value of the matched tooltype. If value is empty, empty string is returned. If no key found, `NULL` returned.
+const char *sys_matchtooltype(const char *key);
+
+// Launches CLI program
+// @param `path` program name
+// @param `arguments` arguments passed to the CLI program
+// @param `workdir` optional, directory from the program will be started
+// @param `stack` optional, sets stack size before launching the command
 // @param `input` stdin file pointer
 // @param `output` stdout file pointer
 // @returns DOS Error code
-uint32_t sys_execute(char *cmdline, bool wait, BPTR input, BPTR output);
+uint32_t sys_execute(char *path, const char *arguments, const char *workdir, uint32_t stack, BPTR input, BPTR output);
 
 // Launches disk object with icon
-// @param `dobj` valid DiskObject (loaded .info file)
-// @param `path` full path to target file
-uint32_t sys_launchwb(struct DiskObject *dobj, char *path);
+// @param `path` specifies path to the DiskObject - file without .info extension
+// @returns DOS Error Code
+uint32_t sys_launchwb(const char *path);
 
 // @returns DOS Error code
 uint32_t sys_examine(const char *path, fileinfo_t *item);
@@ -142,6 +165,8 @@ uint32_t sys_listvol(buffer_t *array);
 
 // @returns `true` for the browsable container type
 bool sys_iscontainer(containertype_t ct);
+
+char *sys_isicon(const char *path);
 
 uint32_t sys_djb2(const void *data, uint32_t len);
 uint32_t sys_fnv1a32(const void * data, uint32_t len);

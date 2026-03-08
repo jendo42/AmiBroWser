@@ -350,9 +350,13 @@ static bool browser_window_open(browser_window_t *window, const char *path)
 	browser_window_set_title(window, NULL);
 	buffer_clear(&window->lines);
 	bool result = browser_open(browser, path);
+	const char *title = browser_window_current_path(window);
+	if (!result) {
+		LOG_ERROR("Failed to open '%s': %s", title, sys_ioerrmessage(browser->error));
+	}
 	window->offset = 0;
 	browser_window_refresh(window);
-	browser_window_set_title(window, "%s", browser_window_current_path(window));
+	browser_window_set_title(window, "%s", title);
 	return result;
 }
 

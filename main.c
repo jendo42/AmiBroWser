@@ -38,86 +38,44 @@
 
 LOG_FACILITY(Main, LL_INFO);
 
-extern int    __argc;
-extern char **__argv;
-extern uint32_t __commandlen;
-extern char *__commandline;
-
-extern struct WBStartup *_WBenchMsg;
-
-// Disable command line parsing
-// argv and argc are null now
-// TODO: maybe reimplement the buggy argument parsing
-void __nocommandline(){};
-
 int main(int argc, char *argv[])
 {
-	// init system objects
 	(void)argc, (void)argv;
-	struct Process *process = (struct Process *)FindTask(NULL);
-	if (!_WBenchMsg && !process->pr_CLI) {
+
+	if (!sys_init()) {
 		return ERROR_INVALID_RESIDENT_LIBRARY;
 	}
 
 #ifndef NLOG
-	if (!process->pr_CLI) {
-		sys_attachconsole("AmiBroWser Debug", 0, 0, 600, 200);
+	{
+		struct Process *process = (struct Process *)FindTask(NULL);
+		if (!process->pr_CLI && sys_matchtooltype("DEBUG")) {
+			sys_attachconsole("AmiBroWser Debug", 0, 0, 600, 200);
+		}
+		buffer_t buffer;
+		buffer_init(&buffer, 1, 64);
+		for (logfacility_t **it = log_facilitylist(); *it; it++) {
+			logfacility_t *facility = *it;
+			buffer_clear(&buffer);
+			sys_sprintf(&buffer, "LOG:%s", facility->name);
+			buffer_append(&buffer, "", 1);
+			const char *value = sys_matchtooltype(buffer.data);
+			loglevel_t level = log_parselevel(value);
+			if (level != LL_UNKNOWN) {
+				facility->level = level;
+			}
+		}
+		buffer_cleanup(&buffer);
 	}
 #endif // NLOG
 
 	LOG_INFO(
 		"AmiBroWser %s\n"
 		"Copyright (c) 2026 by Michal 'Jendo' Jenikovsky\n"
-		"This program comes with ABSOLUTELY NO WARRANTY.\n"
+		"This program comes with ABSOLUTELY NO WARRANTY."
 	, XSTR(GIT_VERSION));
-	if (!sys_init()) {
-		return RETURN_FAIL;
-	}
-
-	// NOTE: workdir doesn't need to be released by buffer_cleanup
-	// workdir.data passed into window init function, will be released there
-	buffer_t workdir;
-	buffer_init(&workdir, 1, 256);
-	sys_getpath(process->pr_CurrentDir, &workdir);
-	buffer_append(&workdir, "", 1);
-	LOG_DEBUG("CurrentDir: '%s'", workdir.data);
 
 	requester_init();
-
-	// process arguments
-	if (process->pr_CLI) {
-		// Parse argv and enter main processing loop.
-		struct CommandLineInterface * cli = (struct CommandLineInterface *)BADDR(process->pr_CLI);
-		char *cmdname = (char *)BADDR(cli->cli_CommandName);
-
-		buffer_t buffer;
-		buffer_init(&buffer, 1, 256);
-		buffer_append(&buffer, "\"", 1);
-		buffer_append(&buffer, cmdname + 1, *cmdname);
-		buffer_append(&buffer, "\" ", 2);
-		buffer_append(&buffer, __commandline, __commandlen);
-		char *back = (char *)buffer_back(&buffer);
-		if (*back == '\n') {
-			*back = 0;
-		} else {
-			buffer_append(&buffer, "", 1);
-		}
-
-		LOG_DEBUG("CLI Args: '%s'", buffer.data);
-		buffer_cleanup(&buffer);
-		if (SysBase->LibNode.lib_Version >= 36) {
-			// load pr_Arguments
-			LOG_DEBUG("pr_Arguments: %s", process->pr_Arguments);
-		}
-	} else if (_WBenchMsg) {
-		// Parse wbstartup and enter main processing loop.
-		struct WBStartup *startup = _WBenchMsg;
-		LOG_DEBUG("WB Args: %d; sm_ToolWindow: '%s'", startup->sm_NumArgs, startup->sm_ToolWindow);
-		for (int i = 0; i < startup->sm_NumArgs; i++) {
-			struct WBArg *arg = startup->sm_ArgList + i;
-			LOG_TRACE("Arg[%u] -> %p; '%s'", i, arg->wa_Lock, arg->wa_Name);
-		}
-	}
 
 	WORD left = IntuitionBase->ActiveScreen->LeftEdge;
 	WORD top = IntuitionBase->ActiveScreen->TopEdge;
@@ -128,7 +86,7 @@ int main(int argc, char *argv[])
 	buffer_init(&windows, sizeof(browser_window_t), 2);
 
 	browser_window_t *w = (browser_window_t *)buffer_emplace_back(&windows);
-	if (!w || !browser_window_init(w, (char *)workdir.data, true, left, top, width, height)) {
+	if (!w || !browser_window_init(w, sys_workdirpath(), false, left, top, width, height)) {
 		LOG_ERROR("Failed to create first browser window!");
 		buffer_pop_back(&windows);
 	}
