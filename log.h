@@ -36,7 +36,9 @@ struct logfacility
 #ifdef NLOG
 
 	#define LOG_FACILITY(n, l)
-	#define LOG(level, format, ...) (void)(##__VA_ARGS__)
+	#define LOG_FACILITY_ITEM(n)
+	#define LOG_FACILITY_DEF(n)
+	#define LOG(level, format, ...)
 
 #else // NLOG
 
