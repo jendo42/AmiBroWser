@@ -693,6 +693,14 @@ uint32_t sys_attachconsole(const char *title, int x, int y, int w, int h)
 	return g_con ? 0 : IoErr();
 }
 
+static void __attribute__ ((noreturn)) sys_spawntask_cleanup()
+{
+	RemTask(NULL);
+
+	// should not execute
+	while (1);
+}
+
 struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t prio, uint32_t stack)
 {
 	struct task_memory
@@ -746,6 +754,7 @@ struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t
 	uint32_t *sp = (uint32_t *)task->tc_SPUpper;
 	*(--sp) = (uint32_t)user; /* Push Arg 2 */
 	*(--sp) = (uint32_t)task; /* Push Arg 1 */
+	*(--sp) = (uint32_t)&sys_spawntask_cleanup; /* return address */
 	task->tc_SPReg = (APTR)sp;
 
 	AddTask(task, func, NULL);
