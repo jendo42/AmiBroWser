@@ -754,12 +754,19 @@ struct Task *sys_spawntask(taskfunc_t func, void *user, const char *name, int8_t
 
 static int sys_proc_entry(char* cmd_line __asm("a0"), int32_t length __asm("d0"))
 {
+	int result = 0;
 	struct Process* self = (struct Process *)FindTask(NULL);
-	fakeseg_t *seg = (fakeseg_t *)(((uint32_t *)BADDR(self->pr_SegList)) - 2);
+	ULONG *array = (ULONG *)BADDR(self->pr_SegList);
+	BPTR seglist = array[3];
+	fakeseg_t *seg = (fakeseg_t *)(((uint32_t *)BADDR(seglist)) - 1);
 	if (seg->data.func) {
-		return seg->data.func((struct Task *)self, seg->data.user);
+		result = seg->data.func(&self->pr_Task, seg->data.user);
 	}
-	return 0;
+
+	// seg can be released because we are not currently executing
+	// in the seg itself, we did only jump to another location
+	FreeMem(seg, sizeof(fakeseg_t));
+	return result;
 }
 
 struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int8_t prio, uint32_t stack)
@@ -774,12 +781,12 @@ struct MsgPort *sys_spawnproc(taskfunc_t func, void *user, const char* name, int
 
 	/* C. Build the M68k Trampoline */
 	/* 0x4EF9 is the 68000 opcode for JMP (Absolute) */
-	seg->jump = 0x4EF9;
-	seg->entry = sys_proc_entry;
+	seg->jump = 0x4EF9;	// 0100_1110_1111_1001
+	seg->entry = &sys_proc_entry;
 	seg->data.func = func;
 	seg->data.user = user;
 
-	BPTR bptrSeg = (BPTR)(((uint32_t)&seg->jump) >> 2);
+	BPTR bptrSeg = MKBADDR(&seg->next);
 	struct MsgPort *newProc = CreateProc(name, prio, bptrSeg, stack);
 	if (!newProc) {
 		FreeMem(seg, sizeof(fakeseg_t));

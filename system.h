@@ -37,10 +37,10 @@ struct taskdata
 };
 
 struct fakeseg {
-	uint32_t size;			/* -8 bytes: So DOS knows how much to FreeMem */
-	uint32_t next;			/* -4 bytes: Pointer to next segment (0) */
-	uint16_t jump;			/* +0 bytes: The M68k instruction */
-	entryfunc_t entry;		/* +2 bytes: The address to jump to */
+	uint32_t size;			/* -4 bytes: So DOS knows how much to FreeMem */
+	uint32_t next;			/* +0 bytes: Pointer to next segment (0) */
+	uint16_t jump;			/* +2 bytes: The M68k instruction */
+	entryfunc_t entry;		/* +4 bytes: The address to jump to */
 	taskdata_t data;
 };
 
