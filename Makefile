@@ -71,23 +71,28 @@ CPPFLAGS := $(CPPFLAGS) -DNDEBUG=1
 endif
 
 # List source files
-SRCS=$(wildcard $(SRC_DIR)/*.c)
-SRCS_S=$(wildcard $(SRC_DIR)/*.s)
-SRCS_CPP=$(wildcard $(SRC_DIR)/*.cpp)
-SRCS_H=$(wildcard $(SRC_DIR)/*.h)
+SRCS_S  =$(wildcard $(SRC_DIR)/*.s)
+SRCS_C  =$(wildcard $(SRC_DIR)/*.c)
+SRCS_CXX=$(wildcard $(SRC_DIR)/*.cpp)
+SRCS_H  =$(wildcard $(INCLUDE_DIR)/*.h)
 
 # List of object files generated from source files
-OBJS=$(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS)) $(patsubst $(SRC_DIR)/%.s, $(BUILD_DIR)/%.o, $(SRCS_S)) $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(SRCS_CPP))
+OBJS = \
+	$(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS_C)) \
+	$(patsubst $(SRC_DIR)/%.s, $(BUILD_DIR)/%.o, $(SRCS_S)) \
+	$(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(SRCS_CXX)) \
+
 
 .PHONY: all generate_version generate_log_items generate_log_defs
 
 all: $(OUTPUT)
 
 dump:
-	@echo $(OBJS)
-	@echo $(SRCS)
-	@echo $(SRCS_S)
-	@echo $(CC)
+	@echo CC: $(CC)
+	@echo OBJS: $(OBJS)
+	@echo SRCS_C: $(SRCS_C)
+	@echo SRCS_CXX: $(SRCS_CXX)
+	@echo SRCS_S: $(SRCS_S)
 
 generate_version: $(BUILD_DIR)
 	@echo -n "#define GIT_VERSION " > $(VERSION_H).tmp
@@ -98,14 +103,14 @@ generate_version: $(BUILD_DIR)
 $(VERSION_H): generate_version
 
 generate_log_items: $(BUILD_DIR)
-	@for i in `rgrep -h LOG_FACILITY *.c | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_ITEM($$i)" >> "$(LOG_ITEMS).tmp"; done
+	@for i in `rgrep -h LOG_FACILITY $(SRCS_C) | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_ITEM($$i)" >> "$(LOG_ITEMS).tmp"; done
 	@cmp -s $(LOG_ITEMS) $(LOG_ITEMS).tmp || (mv $(LOG_ITEMS).tmp $(LOG_ITEMS) && echo "Generated '$(LOG_ITEMS)'")
 	@rm -f $(LOG_ITEMS).tmp
 
 $(LOG_ITEMS): generate_log_items
 
 generate_log_defs: $(BUILD_DIR)
-	@for i in `rgrep -h LOG_FACILITY *.c | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_DEF($$i)" >> "$(LOG_DEFS).tmp"; done
+	@for i in `rgrep -h LOG_FACILITY $(SRCS_C) | tr -d ' \r' | sed -nE 's/LOG_FACILITY\((.+),(.+)\)\;/\1/p'`; do echo "LOG_FACILITY_DEF($$i)" >> "$(LOG_DEFS).tmp"; done
 	@cmp -s $(LOG_DEFS) $(LOG_DEFS).tmp || (mv $(LOG_DEFS).tmp $(LOG_DEFS) && echo "Generated '$(LOG_DEFS)'")
 	@rm -f $(LOG_DEFS).tmp
 
@@ -147,4 +152,5 @@ clean:
 deploy: $(OUTPUT)
 	@echo "Copying stripped '$(OUTPUT)' to floppy..."
 	@$(STRIP) $(OUTPUT)
-	@$(CMD) /C copy '$(HOST_OUTPUT)' '$(HOST_ICON)' C:\\
+	@$(CMD) /C copy '$(HOST_OUTPUT)' A:\\
+	@$(CMD) /C copy '$(HOST_ICON)' A:\\
