@@ -1,7 +1,8 @@
 # project setup
 PROJ = AmiBroWser
 BUILD_DIR = .build
-SRC_DIR = .
+SRC_DIR = src
+INCLUDE_DIR = include
 
 VERSION_H = $(BUILD_DIR)/version.h
 LOG_ITEMS = $(BUILD_DIR)/log_items.inc
@@ -31,9 +32,14 @@ CFLAGS := \
 	-foptimize-strlen \
 	-ffunction-sections \
 	-fdata-sections \
-	-I$(BUILD_DIR)
+	-I$(BUILD_DIR) \
+	-I$(INCLUDE_DIR) \
 
-CXXFLAGS := -I$(BUILD_DIR)
+
+CXXFLAGS := \
+	-I$(BUILD_DIR) \
+	-I$(INCLUDE_DIR) \
+
 
 CPPFLAGS := \
 	-Wall \
@@ -47,12 +53,14 @@ CPPFLAGS := \
 	-Wno-pointer-sign \
 	-Wno-ignored-qualifiers \
 	-Wno-switch \
-	-pipe
+	-pipe \
+
 
 LDFLAGS := \
 	-mcrt=nix13 \
 	-Wl,--gc-sections \
-	-Wl,-Map=$(OUTPUT_MAP)
+	-Wl,-Map=$(OUTPUT_MAP) \
+
 
 ifeq ($(NLOG), 1)
 CPPFLAGS := $(CPPFLAGS) -DNLOG=1

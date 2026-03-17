@@ -50,6 +50,7 @@ bool list_push_back(list_t *list, void *value)
 		return false;
 	}
 
+	item->list = list;
 	item->value = value;
 	item->next = NULL;
 	item->prev = end;
@@ -78,6 +79,7 @@ bool list_pop_back(list_t *list, bool cleanup_value)
 		free(last->value);
 	}
 	
+	last->list = NULL;
 	last->value = NULL;
 	last->next = NULL;
 	list->end = last;
@@ -109,4 +111,38 @@ void *list_back(list_t *list)
 
 	assert(end->prev != NULL);
 	return end->prev->value;
+}
+
+list_item_t *list_at(list_t *list, int index)
+{
+	bool reverse = index < 0;
+	list_item_t *item = reverse ? list->end : list->begin;
+	for (int i = reverse ? -index : index; i && item; i--) {
+		item = reverse ? item->prev : item->next;
+	}
+	return item;
+}
+
+bool list_erase(list_item_t *item, bool cleanup_value)
+{
+	assert(item != NULL);
+	list_t *list = item->list;
+	assert(list != NULL);
+	if (list->end == item) {
+		return false;
+	}
+	if (list->begin == item) {
+		list->begin = item->next;
+	}
+	if (item->prev) {
+		item->prev->next = item->next;
+	}
+	if (item->next) {
+		item->next->prev = item->prev;
+	}
+	if (cleanup_value) {
+		free(item->value);
+	}
+	free(item);
+	return true;
 }

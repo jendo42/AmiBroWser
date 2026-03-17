@@ -13,6 +13,7 @@ struct list
 
 struct list_item
 {
+	list_t *list;
 	list_item_t *next;
 	list_item_t *prev;
 	void *value;
@@ -26,3 +27,6 @@ bool list_pop_back(list_t *list, bool cleanup_value);
 
 void *list_front(list_t *list);
 void *list_back(list_t *list);
+
+list_item_t *list_at(list_t *list, int index);
+bool list_erase(list_item_t *item, bool cleanup_value);
