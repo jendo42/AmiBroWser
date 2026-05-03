@@ -16,7 +16,7 @@ static buffer_t g_lines;
 
 void requester_init()
 {
-	buffer_init(&g_buffer, 1, 256);
+	buffer_init(&g_buffer, 1, 64);
 	buffer_init(&g_lines, sizeof(struct IntuiText), 8);
 }
 
@@ -72,7 +72,7 @@ bool requester_message(struct Window *window, const char *positive, const char *
 	buffer_clear(&g_buffer);
 	sys_vsprintf(&g_buffer, format, args);
 	// null-terminated message, multiline
-	buffer_append(&g_buffer, "", 1);
+	buffer_append_char(&g_buffer, 0);
 
 	char *message = (char*)g_buffer.data;
 	LOG_WARN("Message: %s", message);
@@ -88,7 +88,7 @@ bool requester_message(struct Window *window, const char *positive, const char *
 	return result;
 }
 
-bool requester_text(const char *message, char *buffer, int len)
+bool requester_text(struct Window *window, const char *title, const char *message, char *buffer, int len)
 {
 	struct Window *win;
 	struct Gadget edit;
@@ -99,6 +99,8 @@ bool requester_text(const char *message, char *buffer, int len)
 	struct IntuiText reject;
 	struct StringInfo value;
 	struct IntuiMessage *msg;
+
+	struct Screen *screen = window ? window->WScreen : NULL;
 
 	/* 1. Define the vertices for a box (Relative to Gadget Top-Left) */
 	/* Order: TopLeft -> TopRight -> BottomRight -> BottomLeft -> Close Loop */
@@ -203,14 +205,15 @@ bool requester_text(const char *message, char *buffer, int len)
 	struct NewWindow nw = {
 		100, 80, 450, 60,       /* Left, Top, Width, Height */
 		0, 1,                   /* Pens */
-		GADGETUP | CLOSEWINDOW | IDCMP_INACTIVEWINDOW, /* IDCMP Flags */
+		/* IDCMP Flags */
+		GADGETUP | CLOSEWINDOW | IDCMP_INACTIVEWINDOW,
 		WINDOWCLOSE | WFLG_ACTIVATE | WFLG_DRAGBAR | WFLG_RMBTRAP,
 		&edit,                  /* Point to the FIRST gadget */
 		NULL,
-		"User Input",           /* Title */
-		NULL, NULL,
+		(char *)title,                  /* Title */
+		screen, NULL,
 		260, 60, 260, 60,       /* Min/Max dimensions (Fixed size) */
-		WBENCHSCREEN
+		screen ? CUSTOMSCREEN : WBENCHSCREEN
 	};
 
 	win = OpenWindow(&nw);
@@ -220,8 +223,7 @@ bool requester_text(const char *message, char *buffer, int len)
 
 	ActivateGadget(&edit, win, NULL);
 
-	// make this window modal
-	Forbid();
+	// TODO: make this window modal
 
 	/* Event Loop */
 	bool running = true;
@@ -245,6 +247,7 @@ bool requester_text(const char *message, char *buffer, int len)
 				}
 			}
 			else if (msg->Class == IDCMP_INACTIVEWINDOW) {
+				WindowToFront(win);
 				ActivateWindow(win);
 			}
 			ReplyMsg((struct Message *)msg);
@@ -252,7 +255,5 @@ bool requester_text(const char *message, char *buffer, int len)
 	}
 
 	CloseWindow(win);
-
-	Permit();
 	return result;
 }

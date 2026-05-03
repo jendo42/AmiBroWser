@@ -18,10 +18,10 @@ static int __regargs browser_item_compare(const void *first, const void *second,
 	browser_ordering_t ordering = browser->ordering;
 	int result = 0;
 	if (ordering & BO_TYPE) {
-		if (sys_iscontainer(a->ctype)) {
+		if (a->type < b->type) {
 			result -= 1;
 		}
-		if (sys_iscontainer(b->ctype)) {
+		if (b->type < a->type) {
 			result += 1;
 		}
 	}
@@ -107,11 +107,11 @@ bool browser_push(browser_t *browser, const char *path, bool release)
 		path = NULL;
 	}
 
+	memset(&state->info, 0, sizeof(state->info));
 	state->path = path;
 	state->release_path = release;
 	state->cursor = 0;
 	browser->state = state;
-
 	return browser_refresh(browser);
 }
 
@@ -147,6 +147,17 @@ bool browser_refresh(browser_t *browser)
 		browser->error = ERROR_NO_MORE_ENTRIES;
 		browser->hash = sys_hcombine(-1, ERROR_NO_MORE_ENTRIES);
 		return false;
+	}
+
+	// TODO: this is slowdown
+	if (*state->path) {
+		err = sys_examine(state->path, &state->info);
+		if (err) {
+			browser->error = err;
+			browser->hash = sys_hcombine(-2, err);
+			LOG_DEBUG("Refresh: failed, %s", sys_ioerrmessage(err));
+			return false;
+		}
 	}
 
 	PROFILE_START();
@@ -189,6 +200,40 @@ const char *browser_currentpath(browser_t *browser)
 	return state ? state->path : NULL;
 }
 
+static bool browser_itempath_internal(browser_t *browser, fileinfo_t *item, buffer_t *buffer)
+{
+	const char *base = browser_currentpath(browser);
+	if (!base) {
+		base = "";
+	}
+	if (*base) {
+		buffer_append_string(buffer, base, false);
+	}
+	buffer_append(buffer, item->name, item->len);
+	if (item->type != IT_FIL) {
+		buffer_append_char(buffer, *base ? '/' : ':');
+	}
+	return true;
+}
+
+bool browser_itempath(browser_t *browser, int index, buffer_t *buffer)
+{
+	browser_state_t *state = browser->state;
+	assert(state != NULL);
+	if (index < 0) {
+		index = state->cursor;
+	}
+	fileinfo_t **it = (fileinfo_t **)buffer_at(&browser->sorted, index);
+	if (!it) {
+		return false;
+	}
+	fileinfo_t *item = *it;
+	if (!item) {
+		return false;
+	}
+	return browser_itempath_internal(browser, item, buffer);
+}
+
 bool browser_move(browser_t *browser, int step)
 {
 	browser_state_t *state = browser->state;
@@ -218,6 +263,9 @@ bool browser_open(browser_t *browser, const char *path)
 
 	// working directory path
 	const char *basePath = state->path;
+	if (!basePath) {
+		basePath = "";
+	}
 
 	// prepare path as malloced string
 	if (path) {
@@ -228,14 +276,17 @@ bool browser_open(browser_t *browser, const char *path)
 
 		path = strdup(path);
 		if (!path) {
-			LOG_ERROR("Failed to strdup 'path' !");
+			LOG_ERROR("Failed to strdup 'path'!");
 			return false;
 		}
 
 		valid = !sys_examine(path, &info);
 	} else {
 		fileinfo_t **pinfo = (fileinfo_t **)buffer_at(&browser->sorted, state->cursor);
-		assert(pinfo != NULL);
+		if (!pinfo) {
+			// we are openning empty view
+			return false;
+		}
 
 		// we have to copy the item to local memory
 		// because the browser->listing will change later
@@ -243,44 +294,32 @@ bool browser_open(browser_t *browser, const char *path)
 		info = **pinfo;
 		valid = true;
 
-		// generate full path for selected file
-		const char *format = basePath ? "%s%s/" : "%s%s:";
-		if (!basePath) {
-			basePath = "";
-		}
-
-		LOG_TRACE("Open: basePath: '%s', info->name: '%s'", basePath, info.name);
-
 		buffer_t buffer;
-		buffer_init(&buffer, 1, 128);
-		sys_sprintf(&buffer, format, basePath, info.name);
-		if (info.ctype == CT_NONE) {
-			// for file remove trailing '/' or ':'
-			buffer_pop_back(&buffer);
-		}
-
-		// null-terminate
-		buffer_append(&buffer, "", 1);
+		buffer_init(&buffer, 1, 64);
+		browser_itempath_internal(browser, &info, &buffer);
+		buffer_append_char(&buffer, 0); // null-terminate
 
 		// full path generated
 		// NOTE: path must be malloc-ed string here,
 		// will be freed on browser_pop(). No need to cleanup the buffer here.
 		path = buffer.data;
+
+		LOG_TRACE("Open: itempath: '%s'", path);
 	}
 
 	if (valid) {
-		LOG_INFO("Opening: %s '%s'", (info.ficon ? "icon" : sys_ctmessage(info.ctype)), path);
+		LOG_INFO("Opening: %s '%s'", (info.ficon ? "icon" : sys_itmessage(info.type)), path);
 	}
 
 	// selected item is file
-	if (valid && info.ctype == CT_NONE) {
+	if (valid && info.type == IT_FIL) {
 		// check if opening icon
 		uint32_t err = 0;
 		if (info.ficon) {
 			// temporarily remove .info extension
 			char *doticon = sys_isicon(path);
 			*doticon = 0;
-			err = sys_launchwb(path);
+			err = sys_launchwb(path, NULL);
 			if (err == ERROR_OBJECT_WRONG_TYPE) {
 				// trying to open drawer from icon file
 				doticon[0] = '/';
@@ -321,6 +360,23 @@ bool browser_open(browser_t *browser, const char *path)
 
 	// selected item is container, push history
 	return browser_push(browser, path, true);
+}
+
+bool browser_open_by(browser_t *browser, const char *tool_path)
+{
+	uint32_t err = 0;
+	buffer_t buffer;
+	buffer_init(&buffer, 1, 64);
+	if (browser_itempath(browser, -1, &buffer)) {
+		buffer_append_char(&buffer, 0);
+		LOG_FATAL("Item to open: '%s'", buffer.data);
+		err = sys_launchwb(tool_path, buffer.data);
+	} else {
+		err = ERROR_NO_MORE_ENTRIES;
+	}
+	buffer_cleanup(&buffer);
+	browser->error = err;
+	return !err;
 }
 
 bool browser_up(browser_t *browser)

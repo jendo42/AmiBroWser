@@ -1,5 +1,9 @@
 #pragma once
 
+#include <stdint.h>
+
+#include "macros.h"
+
 #ifdef NDEBUG
 	#define assert(x) ((void)(x))
 #else

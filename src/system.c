@@ -76,10 +76,12 @@ static void sys_fib2info(fileinfo_t *item, struct FileInfoBlock *fib)
 		assert((item->len + 1U) < sizeof(item->name));
 		memcpy(item->name, fib->fib_FileName, item->len + 1);
 	}
-	item->glen = 0;
+
 	item->hash = sys_djb2(item->name, item->len);
-	item->ctype = fib->fib_DirEntryType > 0 ? CT_DIR : CT_NONE;
+	item->type = fib->fib_DirEntryType > 0 ? IT_DIR : IT_FIL;
+
 	item->attr = fib->fib_Protection & 0xFF;
+
 	if (item->len >= 5) {
 		char *ext = item->name + item->len - 5;
 		if (!strcmp(ext, ".info")) {
@@ -128,7 +130,7 @@ bool sys_init()
 
 	// load path of current directory
 	sys_getpath(process->pr_CurrentDir, &g_workdir);
-	buffer_append(&g_workdir, "", 1);
+	buffer_append_char(&g_workdir, 0);
 
 	// process arguments
 	if (process->pr_CLI) {
@@ -139,21 +141,21 @@ bool sys_init()
 		// reconstruct full path to executable
 		buffer_append_string(&g_executable, g_workdir.data, false);
 		buffer_append(&g_executable, cmdname + 1, *cmdname);
-		buffer_append(&g_executable, "", 1);
+		buffer_append_char(&g_executable, 0);
 
 		// reconstruct full program command line
-		buffer_append(&g_commandline, "\"", 1);
+		buffer_append_char(&g_commandline, '\"');
 		buffer_append(&g_commandline, cmdname + 1, *cmdname);
-		buffer_append(&g_commandline, "\"", 1);
+		buffer_append_char(&g_commandline, '\"');
 		if (__commandlen) {
-			buffer_append(&g_commandline, " ", 1);
+			buffer_append_char(&g_commandline, ' ');
 			buffer_append(&g_commandline, __commandline, __commandlen);
 		}
 		char *back = (char *)buffer_back(&g_commandline);
 		if (*back == '\n') {
 			*back = 0;
 		} else {
-			buffer_append(&g_commandline, "", 1);
+			buffer_append_char(&g_commandline, 0);
 		}
 
 		LOG_DEBUG("CLI Args: '%s'", g_commandline.data);
@@ -322,19 +324,19 @@ uint16_t sys_bstr2cstr(BSTR bstr, char *buffer, uint16_t size)
 	return length;
 }
 
-static containertype_t sys_dlt2ct(LONG dol_Type)
+static itemtype_t sys_dlt2ct(LONG dol_Type)
 {
 	switch (dol_Type) {
 		case DLT_DEVICE:
-			return CT_DEV;
+			return IT_DEV;
 		case DLT_VOLUME:
-			return CT_VOL;
+			return IT_VOL;
 		case DLT_DIRECTORY:
 		case DLT_LATE:
 		case DLT_NONBINDING:
-			return CT_DIR;
+			return IT_DIR;
 		default:
-			return CT_NONE;
+			return IT_FIL;
 	}
 }
 
@@ -347,32 +349,28 @@ uint32_t sys_listvol(buffer_t *array)
 	array->user = (void *)hash;
 	buffer_clear(array);
 
-	Forbid();
-
 	fileinfo_t * item;
+	struct FileInfoBlock fib;
 	struct DosInfo *info = (struct DosInfo *)BADDR(DOSBase->dl_Root->rn_Info);
 	struct DosList *list = (struct DosList *)BADDR(info->di_DevInfo);
-	struct FileInfoBlock fib;
+	Forbid();
+
+	// Iterate DOS devices with disabled multitasking!
+	// Do not call Examine(), it will break the Forbid()
+	// traversing the DOS list must be atomic
 	do {
 		item = (fileinfo_t *)buffer_emplace_back(array);
 		if (!item) {
 			result = ERROR_NO_FREE_STORE;
 			break;
 		}
-		if (!Examine(list->dol_Lock, &fib)) {
-			continue;
-		}
 
-		item->len = 0;
-		if (sys_bstr2cstr(list->dol_Name, NULL, 0)) {
-			item->len = sys_bstr2cstr(list->dol_Name, item->name, sizeof(item->name));
-		}
-
-		sys_fib2info(item, &fib);
-		item->ctype = sys_dlt2ct(list->dol_Type);
+		item->attr = 0;
+		item->type = sys_dlt2ct(list->dol_Type);
+		item->len = sys_bstr2cstr(list->dol_Name, item->name, sizeof(item->name));
+		item->hash = sys_djb2(item->name, item->len);
 		hash = sys_hcombine(hash, item->hash);
 
-		LOG_TRACE("Listvol: Found %s '%s'", sys_ctmessage(item->ctype), item->name);
 	} while ((list = (struct DosList *)BADDR(list->dol_Next)));
 
 	Permit();
@@ -426,7 +424,7 @@ uint32_t sys_listdir(const char *path, buffer_t *array)
 		sys_fib2info(item, &fib);
 		hash = sys_hcombine(hash, item->hash);
 
-		LOG_TRACE("Listdir: Found %s '%s'", sys_ctmessage(item->ctype), item->name);
+		LOG_TRACE("Listdir: Found %s '%s'", sys_itmessage(item->type), item->name);
 	}
 
 	array->user = (void *)hash;
@@ -440,11 +438,11 @@ uint32_t sys_listdir(const char *path, buffer_t *array)
 	return result;
 }
 
-bool sys_iscontainer(containertype_t ct)
+bool sys_iscontainer(const fileinfo_t *item)
 {
-	switch (ct) {
-		case CT_DIR:
-		case CT_VOL:
+	switch (item->type) {
+		case IT_DIR:
+		case IT_VOL:
 			return true;
 		default:
 			return false;
@@ -488,7 +486,7 @@ uint32_t sys_examine(const char *path, fileinfo_t *item)
 		// load type of container from the DosList (root node)
 		struct FileLock *realLock = (struct FileLock *)BADDR(lock);
 		struct DosList *volumeNode = (struct DosList *)BADDR(realLock->fl_Volume);
-		item->ctype = sys_dlt2ct(volumeNode->dol_Type);
+		item->type = sys_dlt2ct(volumeNode->dol_Type);
 
 		Permit();
 	} else {
@@ -525,7 +523,14 @@ const char *sys_exepath()
 existsresult_t sys_exists(const char *path)
 {
 	if (path && *path) {
+		// disable system requester
+		struct Process *proc = (struct Process *)FindTask(NULL);
+		APTR oldWindowPtr = proc->pr_WindowPtr;
+		proc->pr_WindowPtr = (APTR)-1;
+		// try lock
 		BPTR targetLock = Lock(path, ACCESS_READ);
+		// restore
+		proc->pr_WindowPtr = oldWindowPtr;
 		if (targetLock) {
 			struct FileInfoBlock fib;
 			Examine(targetLock, &fib);
@@ -580,7 +585,7 @@ uint32_t sys_getpath(BPTR lock, buffer_t *buffer)
 		currLock = parentLock;
 	}
 
-	// append to buffer
+	// output to buffer
 	buffer_clear(buffer);
 	while (stack.count) {
 		char *name = (char *)buffer_back(&stack);
@@ -598,7 +603,7 @@ BPTR sys_tmpfile(char **name)
 	sys_gettime(&time);
 	buffer_clear(&g_command);
 	sys_sprintf(&g_command, "T:sys_%llX", time.tv_sec, time.tv_usec);
-	buffer_append(&g_command, "", 1);
+	buffer_append_char(&g_command, 0);
 	if (name) {
 		*name = strdup(g_command.data);
 	}
@@ -637,6 +642,7 @@ uint32_t sys_execute(char *path, const char *arguments, const char *workdir, uin
 		sys_sprintf(&g_command, "Stack %d\n", stack);
 	}
 	sys_sprintf(&g_command, "\"%s\" %s\n", path, arguments);
+	buffer_append_char(&g_command, 0);
 
 	LOG_DEBUG("Execute: Command: ----8<----\n%s----8<----", g_command.data);
 	if (!Execute(g_command.data, input, output)) {
@@ -666,15 +672,15 @@ static int sys_launchwb_proc(struct Task *task, void *user)
 		data->startup.sm_Process = port;
 		PutMsg(port, (struct Message *)&data->startup);
 	}
-	Permit();
 
 	if (port) {
+		// no need to call permit as WaitPort is here
 		WaitPort(&process->pr_MsgPort);
 		struct Message *msg = GetMsg(&process->pr_MsgPort);
 		assert(msg == &data->startup.sm_Message);
+		Forbid();
 	}
 
-	Forbid();
 	UnLoadSeg(data->startup.sm_Segment);
 	if (data->tool) {
 		UnLock(data->tool);
@@ -686,38 +692,43 @@ static int sys_launchwb_proc(struct Task *task, void *user)
 	return 0;
 }
 
-uint32_t sys_launchwb(const char *path)
+uint32_t sys_launchwb(const char *path, const char *arg0)
 {
 	LOG_DEBUG("LaunchWB (%s)", path);
 
 	struct DiskObject *dobj = GetDiskObject(path);
 	if (!dobj) {
-		LOG_DEBUG("LaunchWB: GetDiskObject(%s) failed", path);
-		return IoErr();
+		LOG_DEBUG("LaunchWB: no icon file for '%s'", path);
 	}
 
-	LONG stack = dobj->do_StackSize;
+	LONG stack = dobj ? dobj->do_StackSize : 4096;
 	if (stack < 4096) {
 		// minimal stack size
 		stack = 4096;
 	}
 
-	UBYTE type = dobj->do_Type;
+	UBYTE type = dobj ? dobj->do_Type : WBTOOL;
 
 	// get full path to tool
 	const char *proj = NULL;
 	const char *tool = NULL;
 	switch (type) {
 		case WBPROJECT:
-			tool = (char *)dobj->do_DefaultTool;
+			tool = strdup(dobj->do_DefaultTool);
 			proj = path;
 			break;
 		case WBTOOL:
 			tool = path;
+			proj = arg0;
 			break;
 		default:
 			FreeDiskObject(dobj);
 			return ERROR_OBJECT_WRONG_TYPE;
+	}
+
+	// close DiskObject as early as possible to free the memory
+	if (dobj) {
+		FreeDiskObject(dobj);
 	}
 
 	// locate the tool in system
@@ -734,17 +745,24 @@ uint32_t sys_launchwb(const char *path)
 			break;
 		}
 	}
+
 	if (!toolLock) {
 		// tool not found
 		LOG_DEBUG("LaunchWB: tool '%s' not found", tool);
-		FreeDiskObject(dobj);
+	}
+	if (type == WBPROJECT) {
+		// now we can free the tool path
+		free((void *)tool);
+	}
+	if (!toolLock) {
+		// tool not found
 		return IoErr();
 	}
 
 	// get full path of real locked file
 	// (normalize the string especially on OS2.0+)
 	sys_getpath(toolLock, &g_command);
-	buffer_append(&g_command, "", 1);
+	buffer_append_char(&g_command, 0);
 	tool = (char *)g_command.data;
 
 	// parent dir of tool
@@ -752,7 +770,6 @@ uint32_t sys_launchwb(const char *path)
 	if (!toolDir) {
 		LOG_DEBUG("LaunchWB: tool '%s' dir lock failed", tool);
 		UnLock(toolLock);
-		FreeDiskObject(dobj);
 		return IoErr();
 	}
 
@@ -761,25 +778,39 @@ uint32_t sys_launchwb(const char *path)
 	// path to disk object without .info extension
 	BPTR projDir = 0;
 	if (proj) {
+		// separate filename from path
 		char *filepart = (char *)sys_filepart(proj);
-		char backup = filepart[-1];
-		filepart[-1] = 0;
-		projDir = Lock(proj, ACCESS_READ);
-		filepart[-1] = backup;
-	}
-
-	// get the default stack size for the tool
-	struct DiskObject *tooldobj = GetDiskObject(tool);
-	if (tooldobj) {
-		if (tooldobj->do_StackSize > stack) {
-			stack = tooldobj->do_StackSize;
+		int i = -1;
+		char ch = filepart[i];
+		if (ch == ':') {
+			// cannot remove ':' from path
+			// so move to first letter of file name
+			ch = filepart[++i];
 		}
-		FreeDiskObject(tooldobj);
+
+		// path to the project' directory
+		filepart[i] = 0;
+		LOG_DEBUG("LaunchWB: projDir: '%s'", proj);
+
+		// lock project dir
+		projDir = Lock(proj, ACCESS_READ);
+
+		// restore saved character
+		filepart[i] = ch;
 	}
 
-	// close DiskObject as early as possible to free the memory
+	if (type == WBPROJECT) {
+		// get the default stack size for the tool
+		struct DiskObject *tooldobj = GetDiskObject(tool);
+		if (tooldobj) {
+			if (tooldobj->do_StackSize > stack) {
+				stack = tooldobj->do_StackSize;
+			}
+			FreeDiskObject(tooldobj);
+		}
+	}
+
 	LOG_DEBUG("LaunchWB: tool: '%s'; proj: '%s';", tool, proj);
-	FreeDiskObject(dobj);
 
 	// alloc data
 	launchwb_t *data = (launchwb_t *)AllocMem(sizeof(launchwb_t), MEMF_PUBLIC | MEMF_CLEAR);
@@ -816,6 +847,8 @@ uint32_t sys_launchwb(const char *path)
 		++numArgs;
 	}
 
+	LOG_DEBUG("LaunchWB: passing %d arguments", numArgs);
+
 	// populate rest of the startup structure
 	data->startup.sm_NumArgs = numArgs;
 	data->startup.sm_ArgList = data->args;
@@ -824,7 +857,7 @@ uint32_t sys_launchwb(const char *path)
 	data->log = Output();
 	data->tool = toolLock;
 
-	struct MsgPort *port = sys_spawnproc(&sys_launchwb_proc, data, "LaunchWB", 0, 512);
+	struct MsgPort *port = sys_spawnproc(&sys_launchwb_proc, data, "LaunchWB", 0, 384);
 	LOG_DEBUG("LaunchWB: sys_spawnproc: %p, %d", port, IoErr());
 	if (!port) {
 		UnLoadSeg(data->startup.sm_Segment);
@@ -868,9 +901,9 @@ uint32_t sys_attachconsole(const char *title, int x, int y, int w, int h)
 	if (!proc->pr_COS) {
 		if (!g_con) {
 			buffer_t buffer;
-			buffer_init(&buffer, 1, 128);
+			buffer_init(&buffer, 1, 64);
 			sys_sprintf(&buffer, "CON:%d/%d/%d/%d/%s", x, y, w, h, title);
-			buffer_append(&buffer, "", 1);
+			buffer_append_char(&buffer, 0);
 			g_con = Open((char *)buffer.data, MODE_NEWFILE);
 			buffer_cleanup(&buffer);
 		}
@@ -1072,16 +1105,16 @@ uint32_t sys_djb2(const void *data, uint32_t len)
 	return hash;
 }
 
-const char *const sys_ctmessage(containertype_t type)
+const char *const sys_itmessage(itemtype_t type)
 {
 	switch (type) {
-	case CT_NONE:
+	case IT_FIL:
 		return "fil";
-	case CT_DIR:
+	case IT_DIR:
 		return "dir";
-	case CT_DEV:
+	case IT_DEV:
 		return "dev";
-	case CT_VOL:
+	case IT_VOL:
 		return "vol";
 	default:
 		return "unk";

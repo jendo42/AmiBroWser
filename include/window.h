@@ -6,6 +6,25 @@
 
 #include "browser.h"
 
+
+// main thread operations that
+// need access to all windows
+enum bw_operation
+{
+	BWO_OPENING,
+	BWO_OPENED,
+	BWO_CLOSING,
+	BWO_CLOSED,
+	BWO_SWITCH,
+	BWO_COPY,
+};
+
+enum bw_flags
+{
+	BWF_ACTIVE = 1,
+	BWF_CURSOR = 2,
+};
+
 typedef struct browser_window browser_window_t;
 
 struct browser_window
@@ -18,11 +37,11 @@ struct browser_window
 
 	browser_t browser;
 
-	bool closing : 1;
-	bool closed : 1;
-	bool tabulator : 1;
-	bool active : 1;
-	bool cursor_active : 1;
+	const char * viewer_path;
+	const char * editor_path;
+
+	uint8_t opcode;
+	uint8_t flags;
 
 	int16_t cursor;
 	int16_t offset;
@@ -34,7 +53,7 @@ struct browser_window
 	uint32_t view_hash;
 };
 
-bool browser_window_init(browser_window_t *window, const char* path, bool path_release, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height);
+bool browser_window_init(browser_window_t *window, const char* path, bool path_release, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height, struct Screen *screen);
 void browser_window_cleanup(browser_window_t *window);
 bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int count);
 uint32_t browser_window_wait(browser_window_t *window, int count);

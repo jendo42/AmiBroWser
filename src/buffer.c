@@ -122,7 +122,7 @@ bool buffer_append(buffer_t *buffer, const void *data, uint16_t count)
 	return true;
 }
 
-bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count)
+bool buffer_append_file(buffer_t *buffer, uint32_t file, uint16_t count)
 {
 	LOG_TRACE("AppendFile (%p, %p, %u)", buffer, file, (unsigned)count);
 	uint32_t size2read = buffer->size * count;
@@ -139,12 +139,36 @@ bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count)
 
 bool buffer_append_string(buffer_t *buffer, const char *str, bool null_terminate)
 {
-	uint16_t len = strlen(str);
-	if (len) {
+	assert(buffer->size == 1);
+	if (*str) {
+		uint16_t len = strlen(str);
 		if (null_terminate) {
 			++len;
 		}
 		return buffer_append(buffer, str, len);
+	}
+
+	return null_terminate ? buffer_append(buffer, "", 1) : true;
+}
+
+bool buffer_append_char(buffer_t *buffer, char ch)
+{
+	assert(buffer->size == 1);
+	return buffer_append(buffer, &ch, 1);
+}
+
+bool buffer_gc(buffer_t *buffer)
+{
+	LOG_TRACE("GC (%p)", buffer);
+	uint32_t size = buffer->count * buffer->size;
+	if (buffer->data && size && buffer->capacity > size) {
+		void *newdata = realloc(buffer->data, size);
+		if (!newdata) {
+			return false;
+		}
+
+		buffer->data = newdata;
+		return true;
 	}
 
 	return false;

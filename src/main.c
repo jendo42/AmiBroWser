@@ -35,6 +35,7 @@
 #include "browser.h"
 #include "window.h"
 #include "requester.h"
+#include "glob.h"
 
 LOG_FACILITY(Main, LL_INFO);
 
@@ -49,20 +50,24 @@ int main(int argc, char *argv[])
 #ifndef NLOG
 	{
 		struct Process *process = (struct Process *)FindTask(NULL);
-		if (!process->pr_CLI && sys_matchtooltype("DEBUG")) {
+		const char *debug = sys_matchtooltype("DEBUG");
+		if (!process->pr_CLI && debug) {
 			sys_attachconsole("AmiBroWser Debug", 0, 0, 600, 200);
 		}
 		buffer_t buffer;
+		loglevel_t defaultLevel = log_parselevel(debug);
 		buffer_init(&buffer, 1, 64);
 		for (logfacility_t **it = log_facilitylist(); *it; it++) {
 			logfacility_t *facility = *it;
 			buffer_clear(&buffer);
 			sys_sprintf(&buffer, "LOG:%s", facility->name);
-			buffer_append(&buffer, "", 1);
+			buffer_append_char(&buffer, 0);
 			const char *value = sys_matchtooltype(buffer.data);
 			loglevel_t level = log_parselevel(value);
 			if (level != LL_UNKNOWN) {
 				facility->level = level;
+			} else if (defaultLevel != LL_UNKNOWN) {
+				facility->level = defaultLevel;
 			}
 		}
 		buffer_cleanup(&buffer);
@@ -77,22 +82,50 @@ int main(int argc, char *argv[])
 
 	requester_init();
 
+	struct Screen *screen = IntuitionBase->ActiveScreen;
+
+	// if user wants to run on custom screen
+	if (sys_matchtooltype("CUSTOMSCREEN")) { /* 1. Define the parameters of your custom screen */
+		struct NewScreen ns = {
+			0, 0,                   /* LeftEdge, TopEdge (Always 0,0 for screens) */
+			/* Width, Height */
+			screen->Width, screen->Height,
+			2,                      /* Depth (3 bitplanes = 8 colors) */
+			/* DetailPen, BlockPen (Colors for text/blocks) */
+			screen->DetailPen, screen->BlockPen,
+			HIRES,                  /* ViewModes (0 = LowRes. Use HIRES for 640x200) */
+			CUSTOMSCREEN,           /* Type: This tells the OS to make a new one! */
+			NULL,                   /* Font: NULL uses the system default (Topaz) */
+			"AmiBroWser Screen",    /* DefaultTitle: THE DRAG HANDLE! */
+			NULL,                   /* Gadgets: No custom screen gadgets yet */
+			NULL                    /* CustomBitMap: Let Intuition allocate the RAM */
+		};
+
+		/* 2. Ask Intuition to build it and program the Copper! */
+		struct Screen *s = OpenScreen(&ns);
+		if (s) {
+			screen = s;
+		} else {
+			LOG_ERROR("Failed to create screen!");
+		}
+	}
+
 	WORD left = IntuitionBase->ActiveScreen->LeftEdge;
-	WORD top = IntuitionBase->ActiveScreen->TopEdge;
+	WORD top = IntuitionBase->ActiveScreen->TopEdge + screen->BarHeight;
 	WORD width = IntuitionBase->ActiveScreen->Width / 2;
-	WORD height = IntuitionBase->ActiveScreen->Height;
+	WORD height = IntuitionBase->ActiveScreen->Height - screen->BarHeight;
 
 	buffer_t windows;
 	buffer_init(&windows, sizeof(browser_window_t), 2);
 
 	browser_window_t *w = (browser_window_t *)buffer_emplace_back(&windows);
-	if (!w || !browser_window_init(w, sys_workdirpath(), false, left, top, width, height)) {
+	if (!w || !browser_window_init(w, sys_workdirpath(), false, left, top, width, height, screen)) {
 		LOG_ERROR("Failed to create first browser window!");
 		buffer_pop_back(&windows);
 	}
 
 	w = (browser_window_t *)buffer_emplace_back(&windows);
-	if (!w || !browser_window_init(w, NULL, false, left + width, top, width, height)) {
+	if (!w || !browser_window_init(w, NULL, false, left + width, top, width, height, screen)) {
 		LOG_ERROR("Failed to create second browser window!");
 		buffer_pop_back(&windows);
 	}
@@ -103,11 +136,11 @@ int main(int argc, char *argv[])
 
 		LOG_INFO("Entering main loop");
 		bool running = true;
-		while (running) {
+		do {
 			browser_window_t *wins = (browser_window_t *)windows.data;
 			uint32_t signal = browser_window_wait(wins, windows.count);
 			running = browser_window_dispatch(signal, wins, windows.count);
-		}
+		} while (running);
 	} else {
 		LOG_FATAL("Cannot create browser window!");
 	}
@@ -116,6 +149,10 @@ int main(int argc, char *argv[])
 	for (int i = 0; i < windows.count; i++) {
 		browser_window_t *wins = (browser_window_t *)windows.data;
 		browser_window_cleanup(wins + i);
+	}
+
+	if (screen) {
+		CloseScreen(screen);
 	}
 
 	buffer_cleanup(&windows);

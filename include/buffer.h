@@ -27,5 +27,7 @@ void* buffer_back(buffer_t* buffer);
 
 void* buffer_at(buffer_t* buffer, uint16_t i);
 bool buffer_append(buffer_t *buffer, const void *data, uint16_t count);
-bool buffer_append_file(buffer_t *buffer, BPTR file, uint16_t count);
+bool buffer_append_file(buffer_t *buffer, uint32_t file, uint16_t count);
 bool buffer_append_string(buffer_t *buffer, const char *str, bool null_terminate);
+bool buffer_append_char(buffer_t *buffer, char ch);
+bool buffer_gc(buffer_t *buffer);

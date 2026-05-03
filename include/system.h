@@ -16,19 +16,22 @@
 #endif // __INTELLIESENSE__
 
 typedef struct fileinfo fileinfo_t;
-typedef enum containertype containertype_t;
+typedef enum itemtype itemtype_t;
 typedef enum existsresult existsresult_t;
 typedef int (*taskfunc_t)(struct Task *task, void *user);
 typedef int (*entryfunc_t)(char* cmd_line __asm("a0"), int32_t length __asm("d0"));
 typedef struct taskdata taskdata_t;
 typedef struct fakeseg fakeseg_t;
 
-enum containertype
+// this enum also holds natural ordering of the items
+enum itemtype
 {
-	CT_NONE,
-	CT_DIR,
-	CT_DEV,
-	CT_VOL
+	IT_DIR,
+	IT_VOL,
+	IT_DEV,
+	IT_FIL,
+
+	IT_UNK,
 };
 
 enum existsresult
@@ -56,9 +59,8 @@ struct fileinfo
 {
 	char name[108];
 	uint16_t len;
-	uint16_t glen;
 	uint32_t hash;
-	containertype_t ctype : 2;
+	itemtype_t type;
 
 	union {
 		uint16_t attr;
@@ -96,7 +98,7 @@ int sys_sprintf(buffer_t *buffer, const char *format, ...);
 
 uint16_t sys_bstr2cstr(BSTR bstr, char *buffer, uint16_t size);
 const char *const sys_ioerrmessage(uint32_t err);
-const char *const sys_ctmessage(containertype_t type);
+const char *const sys_itmessage(itemtype_t type);
 
 // Does not alloc anything, only finds file part of the path.
 const char * sys_filepart(const char* path);
@@ -151,8 +153,9 @@ uint32_t sys_execute(char *path, const char *arguments, const char *workdir, uin
 
 // Launches disk object with icon
 // @param `path` specifies path to the DiskObject - file without .info extension
+// @param `arg0` argument to pass if tool is launched
 // @returns DOS Error Code
-uint32_t sys_launchwb(const char *path);
+uint32_t sys_launchwb(const char *path, const char *arg0);
 
 // @returns DOS Error code
 uint32_t sys_examine(const char *path, fileinfo_t *item);
@@ -164,12 +167,17 @@ uint32_t sys_listdir(const char *path, buffer_t *array);
 uint32_t sys_listvol(buffer_t *array);
 
 // @returns `true` for the browsable container type
-bool sys_iscontainer(containertype_t ct);
+bool sys_iscontainer(const fileinfo_t *item);
 
 char *sys_isicon(const char *path);
 
 uint32_t sys_djb2(const void *data, uint32_t len);
 uint32_t sys_fnv1a32(const void * data, uint32_t len);
+
+static inline bool sys_isnullempty(const char *str)
+{
+	return !str || !*str;
+}
 
 // @brief Use for merging hashes together
 static inline uint32_t sys_hcombine(uint32_t in, uint32_t value)

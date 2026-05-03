@@ -11,6 +11,7 @@
 #include "buffer.h"
 #include "requester.h"
 #include "assert.h"
+#include "stb_sprintf.h"
 
 #include "window.h"
 
@@ -100,7 +101,7 @@ static void browser_window_set_title(browser_window_t *window, const char *forma
 		va_start(args, format);
 		buffer_clear(&window->title);
 		sys_vsprintf(&window->title, format, args);
-		buffer_append(&window->title, "", 1);
+		buffer_append_char(&window->title, 0);
 		LOG_TRACE("Setting title: '%s'", window->title.data);
 		SetWindowTitles(window->window, (STRPTR)window->title.data, g_title);
 		va_end(args);
@@ -116,8 +117,10 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 	};
 
 	LOG_TRACE("RefreshCursor (%p)", window);
-	if (window->closed || window->closing) {
-		return false;
+	switch (window->opcode) {
+		case BWO_CLOSED:
+		case BWO_CLOSING:
+			return false;
 	}
 	struct Window *win = (struct Window *)window->window;
 	if (!win) {
@@ -130,7 +133,10 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 		// no cursor when no browsing state
 		return false;
 	}
-	if (window->cursor == state->cursor && window->cursor_active == window->active) {
+
+	bool cursor_active = !!(window->flags & BWF_CURSOR);
+	bool active = !!(window->flags & BWF_ACTIVE);
+	if (window->cursor == state->cursor && cursor_active == active) {
 		// no change, do nothing
 		return false;
 	}
@@ -152,10 +158,15 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 
 	struct Rectangle newRect;
 	browser_window_item_rect(window, &safeRect, state->cursor, &newRect);
-	int viewOffset = newRect.MaxX - safeRect.MaxX + 10;
-	if (viewOffset < 0) {
-		viewOffset = 0;
+
+	int viewOffset = window->offset;
+	if (newRect.MinX < safeRect.MinX + viewOffset || newRect.MaxX > safeRect.MaxX + viewOffset) {
+		viewOffset = newRect.MaxX - safeRect.MaxX + 10;
+		if (viewOffset < 0) {
+			viewOffset = 0;
+		}
 	}
+
 	if (viewOffset != window->offset) {
 		LOG_TRACE("viewOffset: %d; window->offset: %d", viewOffset, window->offset);
 		window->offset = viewOffset;
@@ -174,7 +185,7 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 		browser_window_item_rect(window, &safeRect, window->cursor, &oldRect);
 		oldRect.MinX -= viewOffset;
 		oldRect.MaxX -= viewOffset;
-		if (window->cursor_active) {
+		if (cursor_active) {
 			SetAfPt(rp, NULL, 0);
 			RectFillRect(rp, &oldRect);
 		} else {
@@ -184,7 +195,7 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 	}
 
 	// draw new cursor
-	if (window->active) {
+	if (active) {
 		SetAfPt(rp, NULL, 0);
 		RectFillRect(rp, &newRect);
 	} else {
@@ -193,7 +204,12 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 	}
 
 	window->cursor = state->cursor;
-	window->cursor_active = window->active;
+	if (active) {
+		window->flags |= BWF_CURSOR;
+	} else {
+		window->flags &= ~BWF_CURSOR;
+	}
+
 	browser_window_end_paint(window);
 
 	PROFILE_END("RefreshCursor");
@@ -203,8 +219,10 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 static void browser_window_refresh(browser_window_t *window)
 {
 	LOG_TRACE("Refresh (%p)", window);
-	if (window->closed || window->closing) {
-		return;
+	switch (window->opcode) {
+		case BWO_CLOSED:
+		case BWO_CLOSING:
+			return;
 	}
 	struct Window *win = (struct Window *)window->window;
 	if (!win) {
@@ -228,9 +246,12 @@ static void browser_window_refresh(browser_window_t *window)
 	SetDrMd(rp, JAM1);
 	SetAPen(rp, 0);
 	SetBPen(rp, 0);
+	SetAfPt(rp, NULL, 0);
+
+	// clear screen
 	RectFillRect(rp, &safeRect);
 
-	if (!browser->listing.count) {
+	if (!browser->listing.count && browser->error) {
 		const char *err = browser_error(browser);
 		sys_sprintf(&browser->message, "Result: %s (%d)", err, browser->error);
 	}
@@ -238,7 +259,7 @@ static void browser_window_refresh(browser_window_t *window)
 	// convert browser message text into intuition text lines
 	if (browser->message.count) {
 		// terminate the message by '\0'
-		buffer_append(&browser->message, "", 1);
+		buffer_append_char(&browser->message, 0);
 		requester_text2lines((char *)browser->message.data, &window->lines);
 		buffer_clear(&browser->message);
 	}
@@ -257,53 +278,62 @@ static void browser_window_refresh(browser_window_t *window)
 	uint16_t viewOffset = window->offset;
 	LOG_TRACE("viewOffset: %d", viewOffset);
 
-	uint16_t baseX = safeRect.MinX + 5 - viewOffset;
-	uint16_t baseY = safeRect.MinY + 10;
+	int16_t baseX = safeRect.MinX + 5 - viewOffset;
+	int16_t baseY = safeRect.MinY + 10;
 
 	fileinfo_t **items = (fileinfo_t **)buffer_at(&browser->sorted, 0);
 	uint16_t items_count = browser->sorted.count;
 	uint16_t maxLen = window->columnChars;
-
-	//fileinfo_t *items = (fileinfo_t *)buffer_at(&browser->listing, 0);
-	//uint16_t items_count = browser->listing.count;
 	uint16_t wh = win->Height;
 	assert(browser->listing.count == browser->sorted.count);
-	for (int j = 0; j < items_count; j += maxRows) {
 
+	// for each column
+	maxWidth = 0;
+	for (uint16_t j = 0; j < items_count; j += maxRows) {
 		uint16_t colWidth = colW;
-		uint16_t currentX = baseX + maxWidth;
-		uint16_t currentY = baseY;
+		int16_t currentX = baseX + maxWidth;
+		int16_t currentY = baseY;
+		int16_t nextX = currentX + colW;
 		uint8_t currentPen = -1;
 
-		// vertical bars
+		// vertical bars, for each column
 		SetAPen(rp, 1);
-		Move(rp, currentX + colW + 5, 0);
-		Draw(rp, currentX + colW + 5, wh);
+		Move(rp, nextX + 5, 0);
+		Draw(rp, nextX + 5, wh);
 		SetAPen(rp, 3);
-		Move(rp, currentX + colW + 4, 0);
-		Draw(rp, currentX + colW + 4, wh);
+		Move(rp, nextX + 4, 0);
+		Draw(rp, nextX + 4, wh);
 		SetAPen(rp, 2);
-		Move(rp, currentX + colW + 3, 0);
-		Draw(rp, currentX + colW + 3, wh);
+		Move(rp, nextX + 3, 0);
+		Draw(rp, nextX + 3, wh);
+
+		LOG_DEBUG("currentX: %d", currentX);
+		if (currentX > safeRect.MaxX || nextX < safeRect.MinX) {
+			// skip invisible columns
+			colWidth += 10;
+			maxWidth += colWidth;
+			items += maxRows;
+			continue;
+		}
 
 		// text items
-		for (uint16_t i = 0; i < maxRows; i++) {
-			uint16_t index = j+i;
-			if (index >= items_count) {
+		uint16_t end = j+maxRows;
+		for (uint16_t i = j; i < end; i++) {
+			if (i >= items_count) {
 				break;
 			}
 
 			fileinfo_t *item = *items++;
-			//fileinfo_t *item = items++;
 
 			// move
 			Move(rp, currentX, currentY);
-			currentY += rowH;
 
 			// directory color
-			uint8_t targetPen = sys_iscontainer(item->ctype) ? 1 : 2;
-			if (item->ficon) {
+			uint8_t targetPen;
+			if (item->ficon || item->type == IT_VOL) {
 				targetPen = 3;
+			} else {
+				targetPen = sys_iscontainer(item) ? 1 : 2;
 			}
 			if (currentPen != targetPen) {
 				currentPen = targetPen;
@@ -315,8 +345,25 @@ static void browser_window_refresh(browser_window_t *window)
 			uint16_t len = item->len;
 			if (len > maxLen) {
 				len = maxLen;
+				char buffer[128];
+				uint16_t toCopy = len - 1;
+				const char *ext = strrchr(name, '.');
+				if (ext) {
+					toCopy -= strlen(ext);
+					memcpy(buffer, name, toCopy);
+					buffer[toCopy++] = '~';
+					strcpy(buffer + toCopy, ext);
+				} else {
+					memcpy(buffer, name, toCopy);
+					buffer[toCopy++] = '~';
+					buffer[toCopy] = 0;
+				}
+				Text(rp, buffer, len);
+			} else {
+				Text(rp, name, len);
 			}
-			Text(rp, name, len);
+
+			currentY += rowH;
 		}
 
 		colWidth += 10;
@@ -374,8 +421,10 @@ static bool browser_window_back(browser_window_t *window)
 
 static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qualifier)
 {
-	if (window->closed || window->closing) {
-		return false;
+	switch (window->opcode) {
+		case BWO_CLOSED:
+		case BWO_CLOSING:
+			return false;
 	}
 	struct Window *win = (struct Window *)window->window;
 	if (!win) {
@@ -404,7 +453,20 @@ static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qua
 			beep = !browser_window_back(window);
 			break;
 		case 0x42: // tabulator
-			window->tabulator = true;
+			window->opcode = BWO_SWITCH;
+			break;
+		case 0x52: // F3
+			if (!browser_open_by(&window->browser, window->viewer_path)) {
+				requester_message(window->window, NULL, "Close", "Failed to start viewer tool '%s': %s\n\nPlease set correct tooltype in the icon.", window->viewer_path, sys_ioerrmessage(window->browser.error));
+			}
+			break;
+		case 0x53: // F4
+			if (!browser_open_by(&window->browser, window->editor_path)) {
+				requester_message(window->window, NULL, "Close", "Failed to start editor tool '%s': %s\n\nPlease set correct tooltype in the icon.", window->editor_path, sys_ioerrmessage(window->browser.error));
+			}
+			break;
+		default:
+			//LOG_FATAL("Unhandled key: %X, %X", code, qualifier);
 			break;
 	}
 
@@ -419,17 +481,47 @@ void browser_window_ask_location(browser_window_t *window)
 {
 	char buffer[512] = {0};
 	strncpy(buffer, browser_currentpath(&window->browser), sizeof(buffer) - 1);
-	if (requester_text("Enter location:", buffer, sizeof(buffer))) {
+	if (requester_text(window->window, g_title, "Enter location:", buffer, sizeof(buffer))) {
 		browser_window_open(window, buffer);
 	}
 }
 
-bool browser_window_init(browser_window_t *window, const char* path, bool path_release, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height)
+bool browser_window_init(browser_window_t *window, const char* path, bool path_release, WORD LeftEdge, WORD TopEdge, WORD Width, WORD Height, struct Screen *screen)
 {
 	LOG_DEBUG("Init (%p)", window);
-	window->closing = false;
-	window->closed = true;
+	window->opcode = BWO_OPENING;
 	window->offset = 0;
+	window->flags = 0;
+
+	// assign default viewer
+	window->viewer_path = sys_matchtooltype("VIEWER");
+	if (sys_isnullempty(window->viewer_path)) {
+		// use MultiView on 3.0+
+		window->viewer_path = "SYS:Utilities/MultiView";
+		if (sys_exists(window->viewer_path) != ER_IS_FILE) {
+			// fallback to More on 1.3 / 2.0
+			window->viewer_path = "SYS:Utilities/More";
+		}
+	}
+	LOG_INFO("Using '%s' as viewer tool", window->viewer_path);
+
+	// assign default editor
+	window->editor_path = sys_matchtooltype("EDITOR");
+	if (sys_isnullempty(window->editor_path)) {
+		window->editor_path = "C:Ed";
+	}
+	LOG_INFO("Using '%s' as editor tool", window->editor_path);
+
+	bool customScreen = screen && screen != IntuitionBase->ActiveScreen;
+
+	/* Window Flags: Capabilities of the window */
+	/* It has a close gadget, depth gadget, drag bar */
+
+	ULONG flags = WFLG_NEWLOOKMENUS;
+	if (!customScreen) {
+		flags |= WFLG_DEPTHGADGET | WFLG_SIZEGADGET | WFLG_DRAGBAR;
+	}
+
 	struct NewWindow nw = {
 		LeftEdge, TopEdge,
 		Width, Height,
@@ -437,22 +529,20 @@ bool browser_window_init(browser_window_t *window, const char* path, bool path_r
 		
 		/* IDCMP Flags: Events we want to hear about */
 		/* We only want to know when the Close Gadget is clicked */
-		IDCMP_DISKINSERTED | IDCMP_DISKREMOVED | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW,
-		
-		/* Window Flags: Capabilities of the window */
-		/* It has a close gadget, depth gadget, drag bar */
-		WFLG_DEPTHGADGET | WFLG_SIZEGADGET | WFLG_DRAGBAR | WFLG_NEWLOOKMENUS,
-		
+		IDCMP_DISKINSERTED | IDCMP_DISKREMOVED | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW | IDCMP_NEWPREFS,
+		flags,				/* Window Flags */
+
 		NULL,				/* FirstGadget (User custom gadgets) */
 		NULL,				/* CheckMark (Custom imagery) */
 		"Starting...",		/* Window Title */
-		NULL,				/* Screen (NULL = Workbench) */
+		screen,				/* Screen (NULL = Workbench) */
 		NULL,				/* BitMap (Custom bitmap) */
 		
 		100, 50,			/* MinWidth, MinHeight */
 		-1, -1,				/* MaxWidth, MaxHeight */
-		
-		WBENCHSCREEN		/* Type (Open on Workbench) */
+
+		/* Type (Open on Workbench) */
+		customScreen ? CUSTOMSCREEN : WBENCHSCREEN
 	};
 
 	nw.Title = (STRPTR)g_title;
@@ -485,7 +575,7 @@ bool browser_window_init(browser_window_t *window, const char* path, bool path_r
 	}
 
 	// redraw window
-	window->closed = false;
+	window->opcode = BWO_OPENED;
 	window->view_hash = 0;
 
 	window->columnChars = 16;
@@ -498,8 +588,8 @@ bool browser_window_init(browser_window_t *window, const char* path, bool path_r
 
 void browser_window_cleanup(browser_window_t *window)
 {
-	LOG_DEBUG("Cleanup (%p, %s)", window, window->closed ? "true" : "false");
-	if (!window->closed) {
+	LOG_DEBUG("Cleanup (%p, %u)", window, window->opcode);
+	if (window->opcode != BWO_CLOSED) {
 		if (window->window) {
 			CloseWindow(window->window);
 			window->window = NULL;
@@ -507,8 +597,7 @@ void browser_window_cleanup(browser_window_t *window)
 		buffer_cleanup(&window->title);
 		buffer_cleanup(&window->lines);
 		browser_cleanup(&window->browser);
-		window->closed = true;
-		window->closing = false;
+		window->opcode = BWO_CLOSED;
 	}
 }
 
@@ -518,7 +607,7 @@ bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int cou
 	int processed = 0;
 	for (int i = 0; i < count; i++) {
 		browser_window_t *window = windows + i;
-		if (window->closed) {
+		if (window->opcode == BWO_CLOSED) {
 			continue;
 		}
 
@@ -530,17 +619,18 @@ bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int cou
 
 		struct MenuItem *menuItem;
 		struct IntuiMessage *msg;
-		while (!window->closing && (msg = (struct IntuiMessage *)GetMsg(win->UserPort))) {
+		while (window->opcode == BWO_OPENED && (msg = (struct IntuiMessage *)GetMsg(win->UserPort))) {
 			//LOG_TRACE("Message for (%p): %X, %X", window, msg->Class, (ULONG)msg->Code);
 			switch (msg->Class) {
 				case IDCMP_CLOSEWINDOW:
-					window->closing = true;
+					window->opcode = BWO_CLOSING;
 					break;
 				case IDCMP_DISKINSERTED:
 				case IDCMP_DISKREMOVED:
 					browser_refresh(&window->browser);
 					browser_window_refresh(window);
 					break;
+				case IDCMP_NEWPREFS:
 				case IDCMP_NEWSIZE:
 					window->view_hash = 0;
 					browser_window_refresh(window);
@@ -565,35 +655,38 @@ bool browser_window_dispatch(uint32_t signal, browser_window_t *windows, int cou
 					if (menuItem == &itemQuit) {
 						running = false;
 					} else if (menuItem == &itemSwitch) {
-						window->tabulator = true;
+						window->opcode = BWO_SWITCH;
 					} else if (menuItem == &itemLocation) {
 						browser_window_ask_location(window);
 					}
 					break;
 				case IDCMP_ACTIVEWINDOW:
-					window->active = true;
+					window->flags |= BWF_ACTIVE;
 					break;
 				case IDCMP_INACTIVEWINDOW:
-					window->active = false;
+					window->flags &= ~BWF_ACTIVE;
 					break;
 			}
 			ReplyMsg((struct Message *)msg);
 		}
 
-		if (window->tabulator) {
-			window->tabulator = false;
-			int index = (i + 1) % count;
-			browser_window_t * win = windows + index;
-			ActivateWindow(win->window);
+		switch (window->opcode) {
+			case BWO_SWITCH: {
+				int index = (i + 1) % count;
+				browser_window_t * win = windows + index;
+				WindowToFront(win->window);
+				ActivateWindow(win->window);
+				window->opcode = BWO_OPENED;
+				break;
+			}
+			case BWO_CLOSING:
+				LOG_DEBUG("Closing (%p)", window);
+				browser_window_cleanup(window);
+				break;
 		}
 
-		if (window->active != window->cursor_active) {
+		if (!!(window->flags & BWF_ACTIVE) != !!(window->flags & BWF_CURSOR)) {
 			browser_window_refresh_cursor(window);
-		}
-
-		if (window->closing && !window->closed) {
-			LOG_DEBUG("Closing (%p)", window);
-			browser_window_cleanup(window);
 		}
 
 		++processed;
@@ -607,7 +700,7 @@ uint32_t browser_window_wait(browser_window_t *windows, int count)
 	uint32_t signalMask = 0;
 	for (int i = 0; i < count; i++) {
 		browser_window_t *window = windows + i;
-		if (!window->closed) {
+		if (window->opcode != BWO_CLOSED) {
 			signalMask |= (1L << window->window->UserPort->mp_SigBit);
 		}
 	}
