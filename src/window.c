@@ -364,7 +364,11 @@ static void browser_window_refresh(browser_window_t *window)
 				}
 				Text(rp, buffer, len);
 			} else {
-				Text(rp, name, len);
+				// visibility check
+				int16_t textEnd = currentX + TextLength(rp, name, len);
+				if (textEnd > safeRect.MinX) {
+					Text(rp, name, len);
+				}
 			}
 
 			currentY += rowH;
