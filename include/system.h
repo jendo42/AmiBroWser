@@ -74,6 +74,7 @@ struct fileinfo
 			bool fscript : 1;
 			bool fhold : 1;
 			bool ficon : 1;
+			bool fsel : 1;
 		};
 	};
 };

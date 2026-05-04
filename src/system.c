@@ -81,6 +81,7 @@ static void sys_fib2info(fileinfo_t *item, struct FileInfoBlock *fib)
 	item->type = fib->fib_DirEntryType > 0 ? IT_DIR : IT_FIL;
 
 	item->attr = fib->fib_Protection & 0xFF;
+	item->fsel = false;
 
 	if (item->len >= 5) {
 		char *ext = item->name + item->len - 5;

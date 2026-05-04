@@ -23,6 +23,7 @@ enum bw_flags
 {
 	BWF_ACTIVE = 1,
 	BWF_CURSOR = 2,
+	BWF_SELECT = 4,
 };
 
 typedef struct browser_window browser_window_t;

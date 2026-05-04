@@ -254,6 +254,23 @@ bool browser_move(browser_t *browser, int step)
 	return changed;
 }
 
+bool browser_select(browser_t *browser)
+{
+	browser_state_t *state = browser->state;
+	if (!state) {
+		return false;
+	}
+
+	fileinfo_t **it = (fileinfo_t **)buffer_at(&browser->sorted, state->cursor);
+	if (!it) {
+		return false;
+	}
+
+	fileinfo_t *item = *it;
+	item->fsel = !item->fsel;
+	return true;
+}
+
 bool browser_open(browser_t *browser, const char *path)
 {
 	bool valid = false;

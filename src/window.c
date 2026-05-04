@@ -110,6 +110,23 @@ static void browser_window_set_title(browser_window_t *window, const char *forma
 	}
 }
 
+static void browser_window_draw_selection(struct RastPort *rp, int16_t currentX, int16_t currentY, int16_t rowH, int16_t nextX, bool flip)
+{
+	struct Rectangle rect = {
+		currentX - 1, currentY - rowH + 2,
+		nextX - 1, currentY + 2
+	};
+	SetAPen(rp, 1);
+	if (flip) {
+		SetDrPt(rp, 0x3333);
+	} else {
+		SetDrPt(rp, 0xCCCC);
+	}
+	RectFillRect(rp, &rect);
+	RectEmptyRect(rp, &rect);
+	SetDrPt(rp, 0xFFFF);
+}
+
 static bool browser_window_refresh_cursor(browser_window_t *window)
 {
 	static uint16_t g_ditherData[] = {
@@ -136,7 +153,8 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 
 	bool cursor_active = !!(window->flags & BWF_CURSOR);
 	bool active = !!(window->flags & BWF_ACTIVE);
-	if (window->cursor == state->cursor && cursor_active == active) {
+	bool select = !!(window->flags & BWF_SELECT);
+	if (window->cursor == state->cursor && cursor_active == active && !select) {
 		// no change, do nothing
 		return false;
 	}
@@ -191,6 +209,13 @@ static bool browser_window_refresh_cursor(browser_window_t *window)
 		} else {
 			SetAfPt(rp, g_ditherData, 1);
 			RectFillRect(rp, &oldRect);
+		}
+		// draw new item selection if requested
+		if (select) {
+			window->flags &= ~BWF_SELECT;
+			int16_t width = oldRect.MaxX - oldRect.MinX + 1;
+			int16_t height = oldRect.MaxY - oldRect.MinY + 1;
+			browser_window_draw_selection(rp, oldRect.MinX + 1, oldRect.MinY - 2 + height, height, oldRect.MinX + width, state->cursor & 1);
 		}
 	}
 
@@ -371,6 +396,14 @@ static void browser_window_refresh(browser_window_t *window)
 				}
 			}
 
+			// draw selection
+			if (item->fsel) {
+				currentPen = -1;
+				SetDrMd(rp, COMPLEMENT);
+				browser_window_draw_selection(rp, currentX, currentY, rowH, nextX, i & 1);
+				SetDrMd(rp, JAM1);
+			}
+
 			currentY += rowH;
 		}
 
@@ -462,6 +495,12 @@ static bool browser_window_input(browser_window_t *window, UWORD code, UWORD qua
 			break;
 		case 0x42: // tabulator
 			window->opcode = BWO_SWITCH;
+			break;
+		case 0x40: // space
+			if (browser_select(browser)) {
+				window->flags |= BWF_SELECT;
+				return true;
+			}
 			break;
 		case 0x52: // F3
 			if (!browser_open_by(&window->browser, window->viewer_path)) {
