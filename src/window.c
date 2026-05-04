@@ -349,11 +349,15 @@ static void browser_window_refresh(browser_window_t *window)
 				uint16_t toCopy = len - 1;
 				const char *ext = strrchr(name, '.');
 				if (ext) {
-					toCopy -= strlen(ext);
+					uint16_t extLen = strlen(ext);
+					if (extLen >= toCopy) {
+						goto noext;
+					}
+					toCopy -= extLen;
 					memcpy(buffer, name, toCopy);
 					buffer[toCopy++] = '~';
 					strcpy(buffer + toCopy, ext);
-				} else {
+				} else { noext:
 					memcpy(buffer, name, toCopy);
 					buffer[toCopy++] = '~';
 					buffer[toCopy] = 0;
