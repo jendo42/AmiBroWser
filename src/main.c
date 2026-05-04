@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
 	requester_init();
 
 	struct Screen *screen = IntuitionBase->ActiveScreen;
+	struct Screen *customScreen = NULL;
 
 	// if user wants to run on custom screen
 	if (sys_matchtooltype("CUSTOMSCREEN")) { /* 1. Define the parameters of your custom screen */
@@ -102,11 +103,11 @@ int main(int argc, char *argv[])
 		};
 
 		/* 2. Ask Intuition to build it and program the Copper! */
-		struct Screen *s = OpenScreen(&ns);
-		if (s) {
-			screen = s;
+		customScreen = OpenScreen(&ns);
+		if (customScreen) {
+			screen = customScreen;
 		} else {
-			LOG_ERROR("Failed to create screen!");
+			LOG_ERROR("Failed to create custom screen!");
 		}
 	}
 
@@ -151,8 +152,9 @@ int main(int argc, char *argv[])
 		browser_window_cleanup(wins + i);
 	}
 
-	if (screen) {
-		CloseScreen(screen);
+	if (customScreen) {
+		LOG_DEBUG("Custom screen cleanup");
+		CloseScreen(customScreen);
 	}
 
 	buffer_cleanup(&windows);
